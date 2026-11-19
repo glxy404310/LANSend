@@ -51,6 +51,17 @@ function Dashboard {
  for($i=0;$i -lt 50;$i++){Start-Sleep -Milliseconds 200;$p.Refresh();if($p.MainWindowHandle -ne 0){return $p}}
  throw 'Settings window missing'
 }
+function Settings-Switch($window){
+ $tab=[ReceiptUI]::Child($window,'','SysTabControl32')
+ Assert-That ($tab -ne [IntPtr]::Zero) 'Tab control missing'
+ $toggle=[ReceiptUI]::Child($window,'静默接收','BUTTON')
+ if(![ReceiptUI]::IsWindowVisible($toggle)){
+  [void][ReceiptUI]::SendMessage($tab,256,39,0)
+  [void][ReceiptUI]::SendMessage($tab,257,39,0)
+ }
+ Assert-That ([ReceiptUI]::IsWindowVisible($toggle)) 'Settings tab is not visible'
+ return $toggle
+}
 function Close-TestProcess($p){if($p -and !$p.HasExited){$p.Kill();$p.WaitForExit()}}
 try {
  Run-Engine @('init')
@@ -67,7 +78,7 @@ try {
  for($i=0;$i -lt 50;$i++){Start-Sleep -Milliseconds 100;$panel=Receipt;if([ReceiptUI]::IsWindowVisible($panel)){break}}
  $rx.Refresh()
  Write-Output "Receiver exited=$($rx.HasExited), panel handle=$panel, process window=$($rx.MainWindowHandle)"
- Assert-That ([ReceiptUI]::IsWindowVisible($panel)) 'Front window missing' 
+ Assert-That ([ReceiptUI]::IsWindowVisible($panel)) 'Front window missing'
  foreach($button in @('打开文件','打开收件夹')){
   Assert-That ([ReceiptUI]::Child($panel,$button,'BUTTON') -ne [IntPtr]::Zero) "Missing action $button"
  }
@@ -77,16 +88,17 @@ try {
  Assert-That ([IO.File]::ReadAllText("$inbox\hello (1).txt") -eq 'LANSend QA') 'Batch content mismatch'
  [void][ReceiptUI]::SendMessage($panel,16,0,0)
  $ui=Dashboard
- $toggle=[ReceiptUI]::Child($ui.MainWindowHandle,'静默接收','BUTTON')
+ $toggle=Settings-Switch $ui.MainWindowHandle
  Assert-That ($toggle -ne [IntPtr]::Zero) 'Missing silent switch'
  [void][ReceiptUI]::SendMessage($toggle,245,0,0)
+ for($i=0;$i -lt 20 -and !(Test-Path "$root\silent-receipts");$i++){Start-Sleep -Milliseconds 100}
  Assert-That (Test-Path "$root\silent-receipts") 'Silent mode not saved'
  Close-TestProcess $ui
  Close-TestProcess $rx
  $rx=Start-Process $receiver -ArgumentList receive -PassThru
  Run-Engine @('ready')
  $ui=Dashboard
- $toggle=[ReceiptUI]::Child($ui.MainWindowHandle,'静默接收','BUTTON')
+ $toggle=Settings-Switch $ui.MainWindowHandle
  Assert-That (([ReceiptUI]::SendMessage($toggle,240,0,0)).ToInt32() -eq 1) 'Setting lost after restart'
  Run-Engine @('send',('"{0}"' -f $source))
  Start-Sleep -Milliseconds 500
