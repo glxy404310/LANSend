@@ -1,10 +1,4 @@
-.PHONY: test integration windows macos
-
-test:
-	go test ./...
-
-integration:
-	go test -tags integration -run '^TestEmbeddedTransfer$$' -timeout 120s .
+.PHONY: windows macos package clean
 
 windows:
 	mkdir -p build/windows-amd64 build/windows-arm64
@@ -13,3 +7,9 @@ windows:
 
 macos:
 	./mac-desktop/build.sh
+
+package:
+	python3 scripts/package.py build/windows-amd64/LANSend.exe build/LANSend.app dist
+
+clean:
+	rm -rf build dist

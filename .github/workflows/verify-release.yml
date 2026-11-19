@@ -40,14 +40,25 @@ jobs:
             asset=$(gh api "$release" --jq ".assets[] | select(.name==\"$name\") | .id")
             gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$name"
           done
-          python -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["ARCHIVE"]); assert hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name in pathlib.Path("SHA256SUMS.txt").read_text().splitlines()'
+          PY=python
+          command -v "$PY" >/dev/null 2>&1 || PY=python3
+          "$PY" -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["ARCHIVE"]); assert hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name in pathlib.Path("SHA256SUMS.txt").read_text().splitlines()'
       - if: runner.os == 'Windows'
         shell: pwsh
         run: |
           Expand-Archive LANSend-Windows-x64.zip candidate
-          ./scripts/check-windows.ps1 -Executable ./candidate/LANSend.exe
+          foreach ($file in @('candidate/LANSend.exe', 'candidate/THIRD-PARTY-NOTICES.txt')) {
+            if (!(Test-Path $file -PathType Leaf) -or (Get-Item $file).Length -eq 0) {
+              throw "Missing or empty release file: $file"
+            }
+          }
       - if: runner.os == 'macOS'
         run: |
           mkdir candidate
           ditto -x -k LANSend-macOS-universal.zip candidate
-          bash scripts/check-mac.sh candidate/LANSend.app
+          test -s candidate/THIRD-PARTY-NOTICES.txt
+          codesign --verify --deep --strict candidate/LANSend.app
+          for binary in candidate/LANSend.app/Contents/Resources/engine candidate/LANSend.app/Contents/MacOS/LANSend; do
+            lipo "$binary" -verify_arch arm64
+            lipo "$binary" -verify_arch x86_64
+          done
