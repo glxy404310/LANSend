@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,15 +61,10 @@ func initialize(root string) error {
 		return e
 	}
 	fmt.Printf("本机校验码：%s\n", digest(cert.Certificate[0])[:12])
-	addrs, e := net.InterfaceAddrs()
-	if e != nil {
-		return e
-	}
-	for _, a := range addrs {
-		ip, _, e := net.ParseCIDR(a.String())
-		if e == nil && ip.To4() != nil && !ip.IsLoopback() {
-			fmt.Println("本机 IPv4：", ip)
-		}
+	if ip := primaryLocalIPv4(); ip != "" {
+		fmt.Println("本机 IPv4：", ip)
+	} else {
+		fmt.Println("本机 IPv4：未检测到局域网地址")
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/lxn/walk"
 	d "github.com/lxn/walk/declarative"
-	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -95,7 +94,7 @@ func desktopEntry(args []string) bool {
 }
 func dashboard(root string, initial []string) error {
 	var w *walk.MainWindow
-	var status, peerText *walk.Label
+	var status, peerText, localAddr *walk.Label
 	var bar *walk.ProgressBar
 	var addr, code *walk.LineEdit
 	var sendButton, pairButton *walk.PushButton
@@ -158,12 +157,19 @@ func dashboard(root string, initial []string) error {
 			mine = hash[:12]
 		}
 	}
-	var ips []string
-	addrs, _ := net.InterfaceAddrs()
-	for _, ad := range addrs {
-		ip, _, _ := net.ParseCIDR(ad.String())
-		if ip.To4() != nil && !ip.IsLoopback() {
-			ips = append(ips, ip.String())
+	formatLocalIP := func() string {
+		if ip := primaryLocalIPv4(); ip != "" {
+			return "本机地址    " + ip
+		}
+		return "本机地址    未检测到局域网地址"
+	}
+	showLocalIP := func() {
+		if localAddr == nil {
+			return
+		}
+		text := formatLocalIP()
+		if localAddr.Text() != text {
+			localAddr.SetText(text)
 		}
 	}
 	pairNow := func() {
@@ -305,12 +311,17 @@ func dashboard(root string, initial []string) error {
 		d.Composite{Background: d.SolidColorBrush{Color: dark}, Layout: d.VBox{Margins: d.Margins{Left: 24, Top: 16, Right: 24, Bottom: 16}}, Children: []d.Widget{
 			d.Label{Text: "LANSend", Font: d.Font{Family: "Segoe UI", PointSize: 23, Bold: true}, TextColor: white}, d.Label{AssignTo: &peerText, TextColor: white}}},
 		d.Composite{Layout: d.VBox{Margins: d.Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 10}, Children: []d.Widget{
-			d.TabWidget{AssignTo: &tabs, OnCurrentIndexChanged: refresh, Pages: []d.TabPage{
+			d.TabWidget{AssignTo: &tabs, OnCurrentIndexChanged: func() {
+				refresh()
+				if tabs != nil && tabs.CurrentIndex() == 1 {
+					showLocalIP()
+				}
+			}, Pages: []d.TabPage{
 				{Title: "文件传输", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
 					d.Label{Text: "发送到 Mac", Font: d.Font{Family: "Segoe UI", PointSize: 16, Bold: true}}, d.Label{Text: "可多选文件，或直接拖入此窗口发送。"},
 					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &sendButton, Text: "选择文件并发送…", OnClicked: choose}, d.PushButton{Text: "打开收件箱", OnClicked: inbox}, d.HSpacer{}}}, d.VSpacer{}, d.Label{AssignTo: &status, Text: "等待发送"}, d.ProgressBar{AssignTo: &bar, MaxValue: 100}}},
 				{Title: "配对与设置", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}}, Children: []d.Widget{
-					d.Label{Text: "本机地址    " + strings.Join(ips, "  /  ")}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.CheckBox{AssignTo: &silent, Text: "静默接收（关闭时前台弹窗）", Checked: receiptsSilent(root), OnClicked: func() {
+					d.Label{AssignTo: &localAddr, Text: formatLocalIP()}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.CheckBox{AssignTo: &silent, Text: "静默接收（关闭时前台弹窗）", Checked: receiptsSilent(root), OnClicked: func() {
 						if err := setReceiptsSilent(root, silent.Checked()); err != nil {
 							silent.SetChecked(receiptsSilent(root))
 							walk.MsgBox(w, "收件设置", err.Error(), walk.MsgBoxIconWarning)
@@ -347,7 +358,13 @@ func dashboard(root string, initial []string) error {
 		for {
 			select {
 			case <-tick.C:
-				w.Synchronize(func() { showPeer(); refresh() })
+				w.Synchronize(func() {
+					showPeer()
+					refresh()
+					if tabs != nil && tabs.CurrentIndex() == 1 {
+						showLocalIP()
+					}
+				})
 			case <-stop:
 				return
 			}
