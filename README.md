@@ -23,10 +23,29 @@ LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Wind
 
 ### 日常使用
 
-- **同一局域网**：打开「配对与设置」，输入对方的局域网地址与 12 位校验码保存配对（默认端口 `TCP 53318`）。
+- **同一局域网**：「配对与设置」页会自动检测并显示本机主物理网卡的局域网 IPv4，双方输入对方地址与 12 位校验码保存配对即可（默认端口 `TCP 53318`）。
 - **不同网络**：在「我的电脑 → 远程连接」登录同一个 Tailscale 账号，列表会结合对方主机名（或 Tailscale 自定义设备名）与平台短标识展示同账号在线设备，选中后点击「配对所选电脑」即可双向配对。
 - **发送文件**：在主窗口选择或拖入文件，或通过 Windows 资源管理器右键「发送到 → 用 LANSend 发送」/ macOS Finder 右键「快速操作 / 服务 → 用 LANSend 发送」发送（从旧版升级时会自动清理原「发送到 Mac」/「发送到 Windows」入口）。文件夹请先压缩。
 - **接收方式**：文件默认保存至 `Downloads/LANSend`（重名自动编号）。在「配对与设置」可切换前台弹窗或静默接收，重启后沿用；关闭主窗口后接收服务仍在当前登录会话中运行。
+
+## 更新日志（Release Notes）
+
+### 最新变更（待发布）
+
+- 自动检测本机主物理网卡，「配对与设置」页仅显示单个真实的局域网 IPv4 地址，自动过滤 WSL / Hyper-V、VMware / VirtualBox、Clash TUN、Tailscale 及 `169.254.x.x` 等虚拟或无效地址，并在切换页签与网络变化时刷新。
+- 支持 Windows↔Windows、macOS↔macOS 与 Windows↔macOS 1 对 1 互传：统一窗口标题与右键菜单入口为「发送到已配对设备」/「用 LANSend 发送」，升级时自动清理旧入口。
+- 优化「我的电脑」设备列表展示，结合对方主机名（或 Tailscale 自定义设备名）与平台短标识区分同账号在线设备。
+
+### v1.6.0
+
+- Windows 与 macOS 新增前台收件弹窗及「静默接收」设置，连续收件合并展示，支持直接打开文件或收件夹。
+- macOS 主应用直接托管包内接收引擎，移除旧版独立通知助手。
+
+### v1.5.1
+
+- 支持 Windows 与 macOS 点对点 HTTPS 双向证书校验传文件，集成资源管理器 / Finder 右键快速发送。
+- 支持局域网手动配对，以及基于内置 Tailscale（`tsnet`）的跨网络同账号设备发现与一键双向配对。
+- 支持后台常驻接收，默认保存至 `Downloads/LANSend`。
 
 ## 从源码构建
 
@@ -36,55 +55,13 @@ LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Wind
 | --- | --- | --- |
 | Windows x64 / ARM64（在 macOS 或 Linux 交叉编译） | `make windows` | `build/windows-amd64/LANSend.exe`、`build/windows-arm64/LANSend.exe` |
 | macOS 通用应用（需在 macOS 运行） | `make macos` | `build/LANSend.app` |
-| 清理构建与打包产物 | `make clean` | 移除 `build/` 与 `dist/` |
+| 清理构建目录 | `make clean` | 移除 `build/` 与 `dist/` |
 
-在 Windows 本机使用 PowerShell 构建当前架构图形程序：
+在 Windows 本机使用 PowerShell 构建当前架构程序：
 
 ```powershell
 New-Item -ItemType Directory -Force build | Out-Null
 go build -trimpath -ldflags="-s -w -H=windowsgui" -o build/LANSend.exe .
 ```
 
-- macOS 构建脚本会对应用执行本地签名；如仓库位于云同步目录导致签名失败，可设置 `LANSEND_BUILD_DIR` 指向同步目录之外的路径。
-- `rsrc_windows_amd64.syso` 与 `rsrc_windows_arm64.syso` 为 Windows 图标与程序清单资源，随源码提交。修改 `windows-ui/LANSend.ico` 或 `windows-ui/LANSend.manifest` 后可在根目录重新生成：
-
-```sh
-go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest windows-ui/LANSend.manifest -ico windows-ui/LANSend.ico -o rsrc_windows_amd64.syso
-go run github.com/akavel/rsrc@v0.10.2 -arch arm64 -manifest windows-ui/LANSend.manifest -ico windows-ui/LANSend.ico -o rsrc_windows_arm64.syso
-```
-
-## Release 产物与发布流程
-
-### 产物清单
-
-在完成 Windows 与 macOS 构建后，运行 `make package`（即 `python3 scripts/package.py build/windows-amd64/LANSend.exe build/LANSend.app dist`），会在 `dist/` 目录生成以下 Release 产物：
-
-| 文件 | 内容 |
-| --- | --- |
-| `LANSend-Windows-x64.zip` | `LANSend.exe`、`THIRD-PARTY-NOTICES.txt` |
-| `LANSend-macOS-universal.zip` | 通用架构 `LANSend.app`、`THIRD-PARTY-NOTICES.txt` |
-| `SHA256SUMS.txt` | 上述两个 ZIP 包的 SHA-256 校验清单 |
-
-`scripts/package.py` 会从本机 `GOROOT` 与 `GOMODCACHE` 收集 Go 标准库及所含第三方依赖的许可文件并写入 `THIRD-PARTY-NOTICES.txt`。
-
-### 发布流程
-
-1. 按目标版本更新 `mac-desktop/Info.plist` 中的 `CFBundleShortVersionString` / `CFBundleVersion` 及本文档顶部下载链接。
-2. 构建双端产物：`make windows && make macos`。
-3. 打包并生成校验值：`make package`。
-4. 在 GitHub 创建对应版本标签的 Draft Release，上传 `dist/` 下的三个文件，记录该 Draft Release 的数字 ID。
-5. 在 GitHub Actions 手动运行 [Verify release archives](.github/workflows/verify-release.yml)（传入 `release_id`），在 Windows 与 macOS runner 上校验 `SHA256SUMS.txt`、包内文件完整性、`THIRD-PARTY-NOTICES.txt` 以及 macOS 签名与通用架构（`arm64` / `x86_64`）。
-6. 校验通过后正式发布该 Release。
-
-## 项目结构
-
-| 路径 | 说明 |
-| --- | --- |
-| `main.go`、`receiver.go`、`send_error.go` | CLI 入口、证书配对、HTTPS 收发与错误提示 |
-| `embedded.go`、`account_pair.go`、`remote.go` | 内置 Tailscale (`tsnet`)、同账号设备发现与路由选择 |
-| `desktop_windows.go`、`receipt_windows.go`、`notify_windows.go`、`windows-ui/` | Windows 原生界面、收件弹窗、安装脚本与图标清单 |
-| `desktop_other.go`、`notify_darwin.go`、`notify_other.go`、`reveal_other.go`、`peerlock_*.go` | 跨平台适配与文件锁 |
-| `mac-desktop/` | macOS 原生应用、Finder 快速操作与构建脚本 |
-| `scripts/package.py` | Release 打包、第三方许可汇总与 `SHA256SUMS.txt` 生成 |
-| `.github/workflows/verify-release.yml` | Release 候选产物校验工作流 |
-| `docs/使用指南.md` | 详细安装、使用、升级、校验与卸载说明 |
+> macOS 构建脚本会对应用执行本地签名；如仓库位于云同步目录导致签名失败，可设置 `LANSEND_BUILD_DIR` 指向同步目录之外的路径。
