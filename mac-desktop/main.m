@@ -2,8 +2,8 @@
 
 @interface Desktop:NSObject <NSApplicationDelegate,NSWindowDelegate>
 @property NSWindow *window;
-@property NSTextField *peer,*status,*info,*address,*code;
-@property NSButton *sendButton,*pairButton;
+@property NSTextField *peer,*status,*info,*address,*code,*receiveDirField;
+@property NSButton *sendButton,*pairButton,*resetDirButton;
 @property NSProgressIndicator *progress;
 @property NSView *transfer,*settings,*devices;
 @property NSPopUpButton *picker;
@@ -82,7 +82,17 @@
  NSAlert *a=[NSAlert new];a.messageText=@"远程连接";a.informativeText=msg;[a beginSheetModalForWindow:self.window completionHandler:nil];
  }];
 }
-- (void)inbox:(id)sender {NSURL *u=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/LANSend"] isDirectory:YES];[NSWorkspace.sharedWorkspace openURL:u];}
+- (void)inbox:(id)sender {
+    NSURL *u=self.receiveDirURL;
+    NSError *err=nil;
+    if(![NSFileManager.defaultManager createDirectoryAtURL:u withIntermediateDirectories:YES attributes:nil error:&err]){[self error:err.localizedDescription?:@"无法打开收件箱"];return;}
+    if(![NSWorkspace.sharedWorkspace openURL:u]) NSBeep();
+}
+- (void)openReceivedFolder:(id)sender {
+    NSURL *file=self.files.selectedItem.representedObject;
+    NSURL *folder=file?file.URLByDeletingLastPathComponent:self.receiveDirURL;
+    if(folder && ![NSWorkspace.sharedWorkspace openURL:folder]) NSBeep();
+}
 - (void)scan {
  if(self.devices.hidden || self.busy || self.scanning || !self.engine)return;
  self.scanning=YES;
@@ -106,7 +116,7 @@
  [self run:self.engine args:@[@"connect-device",device] input:nil done:^(BOOL ok,NSString *msg){
  if(!ok){[self error:msg];return;}[self refreshPeer];NSAlert *a=[NSAlert new];a.messageText=@"配对完成";a.informativeText=@"两台电脑现在可以互传文件。";[a beginSheetModalForWindow:self.window completionHandler:nil];}];
 }
-- (void)tab:(NSSegmentedControl*)c {self.transfer.hidden=c.selectedSegment!=0;self.settings.hidden=c.selectedSegment!=1;self.devices.hidden=c.selectedSegment!=2;[self scan];}
+- (void)tab:(NSSegmentedControl*)c {self.transfer.hidden=c.selectedSegment!=0;self.settings.hidden=c.selectedSegment!=1;self.devices.hidden=c.selectedSegment!=2;[self refreshReceiveDir];[self scan];}
 - (BOOL)windowShouldClose:(NSWindow*)sender {if(self.busy){NSBeep();return NO;}return YES;}
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication*)sender{return NO;}
 - (void)applicationWillTerminate:(NSNotification*)notification {
@@ -136,6 +146,95 @@
     if(error){control.selectedSegment=self.silentReceipts?1:0;[self error:error.localizedDescription];return;}
     if(silent) [self.receipt close];
 }
+- (NSString*)defaultReceiveDirPath {
+    return [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/LANSend"];
+}
+- (NSString*)receiveDirSettingPath {
+    return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend/receive-dir"];
+}
+- (NSString*)receiveDirPath {
+    NSString *raw=[NSString stringWithContentsOfFile:self.receiveDirSettingPath encoding:NSUTF8StringEncoding error:nil];
+    if(raw.length){
+        if([raw hasPrefix:@"\uFEFF"]) raw=[raw substringFromIndex:1];
+        NSString *trimmed=[raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if(trimmed.length && [trimmed hasPrefix:@"/"]) return [trimmed stringByStandardizingPath];
+    }
+    return self.defaultReceiveDirPath;
+}
+- (NSURL*)receiveDirURL {
+    return [NSURL fileURLWithPath:self.receiveDirPath isDirectory:YES];
+}
+- (BOOL)isCustomReceiveDir {
+    return ![self.receiveDirPath isEqualToString:[self.defaultReceiveDirPath stringByStandardizingPath]];
+}
+- (void)refreshReceiveDir {
+    NSString *dir=self.receiveDirPath;
+    if(self.receiveDirField){self.receiveDirField.stringValue=dir;self.receiveDirField.toolTip=dir;}
+    if(self.resetDirButton) self.resetDirButton.enabled=self.isCustomReceiveDir;
+}
+- (BOOL)validateWritableDirectory:(NSString*)path error:(NSError**)outError {
+    BOOL isDir=NO;
+    if([NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDir] && !isDir){
+        if(outError) *outError=[NSError errorWithDomain:@"LANSend" code:1 userInfo:@{NSLocalizedDescriptionKey:@"所选路径不是文件夹"}];
+        return NO;
+    }
+    NSError *err=nil;
+    if(![NSFileManager.defaultManager createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:&err]){
+        if(outError) *outError=[NSError errorWithDomain:@"LANSend" code:2 userInfo:@{NSLocalizedDescriptionKey:@"所选目录无法写入，请检查权限或更换文件夹。"}];
+        return NO;
+    }
+    NSString *probe=[path stringByAppendingPathComponent:[NSString stringWithFormat:@".lansend-check-%@",NSUUID.UUID.UUIDString]];
+    if(![[NSData data] writeToFile:probe options:NSDataWritingAtomic error:&err]){
+        if(outError) *outError=[NSError errorWithDomain:@"LANSend" code:3 userInfo:@{NSLocalizedDescriptionKey:@"所选目录无法写入，请检查权限或更换文件夹。"}];
+        return NO;
+    }
+    [NSFileManager.defaultManager removeItemAtPath:probe error:nil];
+    return YES;
+}
+- (void)chooseReceiveDir:(id)sender {
+    if(self.busy) return;
+    NSOpenPanel *p=NSOpenPanel.openPanel;
+    p.canChooseFiles=NO; p.canChooseDirectories=YES; p.allowsMultipleSelection=NO; p.canCreateDirectories=YES;
+    p.prompt=@"选择"; p.directoryURL=self.receiveDirURL;
+    [p beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
+        if(result!=NSModalResponseOK || !p.URL) return;
+        NSString *chosen=[p.URL.path stringByStandardizingPath];
+        NSError *err=nil;
+        if(![self validateWritableDirectory:chosen error:&err]){
+            [self error:err.localizedDescription?:@"所选目录无法写入，请检查权限或更换文件夹。"];
+            return;
+        }
+        NSString *def=[self.defaultReceiveDirPath stringByStandardizingPath];
+        if([chosen isEqualToString:def]){
+            if([NSFileManager.defaultManager fileExistsAtPath:self.receiveDirSettingPath] &&
+               ![NSFileManager.defaultManager removeItemAtPath:self.receiveDirSettingPath error:&err]){
+                [self error:err.localizedDescription];
+                return;
+            }
+        }else{
+            NSString *parent=[self.receiveDirSettingPath stringByDeletingLastPathComponent];
+            if(![NSFileManager.defaultManager createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:&err] ||
+               ![[chosen stringByAppendingString:@"\n"] writeToFile:self.receiveDirSettingPath atomically:YES encoding:NSUTF8StringEncoding error:&err]){
+                [self error:err.localizedDescription];
+                return;
+            }
+        }
+        [self refreshReceiveDir];
+        if(!self.receiver.isRunning) [self startReceiver];
+    }];
+}
+- (void)resetReceiveDir:(id)sender {
+    if(self.busy) return;
+    NSError *err=nil;
+    if([NSFileManager.defaultManager fileExistsAtPath:self.receiveDirSettingPath] &&
+       ![NSFileManager.defaultManager removeItemAtPath:self.receiveDirSettingPath error:&err]){
+        [self error:err.localizedDescription];
+        return;
+    }
+    [NSFileManager.defaultManager createDirectoryAtURL:self.receiveDirURL withIntermediateDirectories:YES attributes:nil error:nil];
+    [self refreshReceiveDir];
+    if(!self.receiver.isRunning) [self startReceiver];
+}
 - (void)openReceived:(id)sender {
     NSURL *file=self.files.selectedItem.representedObject;
     if(file && ![NSWorkspace.sharedWorkspace openURL:file]) NSBeep();
@@ -154,12 +253,12 @@
         self.files=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(18,62,384,34) pullsDown:NO];
         [v addSubview:self.files];
         [self button:@"打开文件" at:NSMakeRect(16,14,116,34) action:@selector(openReceived:) view:v];
-        [self button:@"打开收件夹" at:NSMakeRect(136,14,124,34) action:@selector(inbox:) view:v];
+        [self button:@"打开收件夹" at:NSMakeRect(136,14,124,34) action:@selector(openReceivedFolder:) view:v];
         [self.receipt center];
     }
     BOOL first=!self.receipt.visible;
     if(first) [self.files removeAllItems];
-    NSURL *folder=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/LANSend"] isDirectory:YES];
+    NSURL *folder=self.receiveDirURL;
     NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:name action:nil keyEquivalent:@""];
     item.representedObject=[folder URLByAppendingPathComponent:name];
     [self.files.menu addItem:item];
@@ -185,13 +284,18 @@
     });
 }
 - (void)startReceiver {
-    NSURL *downloads=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Downloads/LANSend"] isDirectory:YES];
+    NSURL *dest=self.receiveDirURL;
     NSError *accessError=nil;
-    [NSFileManager.defaultManager createDirectoryAtURL:downloads withIntermediateDirectories:YES attributes:nil error:&accessError];
-    if(!accessError) [NSFileManager.defaultManager contentsOfDirectoryAtURL:downloads includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:&accessError];
+    [NSFileManager.defaultManager createDirectoryAtURL:dest withIntermediateDirectories:YES attributes:nil error:&accessError];
+    if(!accessError) [NSFileManager.defaultManager contentsOfDirectoryAtURL:dest includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:&accessError];
     if (accessError) {
-        self.status.stringValue=@"接收目录不可访问";
-        if(self.window.visible) [self error:@"请允许 LANSend 访问「下载」文件夹，然后重新打开 LANSend。"];
+        if (self.isCustomReceiveDir) {
+            self.status.stringValue=@"自定义收件目录不可访问";
+            if(self.window.visible) [self error:@"当前自定义收件目录不可访问，请在「配对与设置」中重新选择或恢复默认目录。"];
+        } else {
+            self.status.stringValue=@"接收目录不可访问";
+            if(self.window.visible) [self error:@"请允许 LANSend 访问「下载」文件夹，然后重新打开 LANSend。"];
+        }
         return;
     }
     NSTask *task=[NSTask new];
@@ -219,31 +323,37 @@
     NSMenuItem *edit=[NSMenuItem new];[main addItem:edit];edit.submenu=[[NSMenu alloc]initWithTitle:@"编辑"];
     for(NSArray *a in @[@[@"剪切",@"cut:",@"x"],@[@"复制",@"copy:",@"c"],@[@"粘贴",@"paste:",@"v"],@[@"全选",@"selectAll:",@"a"]])[edit.submenu addItemWithTitle:a[0] action:NSSelectorFromString(a[1]) keyEquivalent:a[2]];
     NSApp.mainMenu=main;
-    self.window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,580,410) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
+    self.window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,580,458) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
     self.window.title=@"LANSend";self.window.delegate=self;self.window.releasedWhenClosed=NO;
-    NSView *v=self.window.contentView;NSView *header=[[NSView alloc]initWithFrame:NSMakeRect(0,304,580,106)];header.wantsLayer=YES;header.layer.backgroundColor=[NSColor colorWithSRGBRed:.075 green:.208 blue:.239 alpha:1].CGColor;[v addSubview:header];
+    NSView *v=self.window.contentView;NSView *header=[[NSView alloc]initWithFrame:NSMakeRect(0,352,580,106)];header.wantsLayer=YES;header.layer.backgroundColor=[NSColor colorWithSRGBRed:.075 green:.208 blue:.239 alpha:1].CGColor;[v addSubview:header];
     [self label:@"LANSend" frame:NSMakeRect(28,49,510,39) size:30 bold:YES view:header].textColor=NSColor.whiteColor;
     self.peer=[self label:@"" frame:NSMakeRect(30,21,520,24) size:14 bold:NO view:header];self.peer.textColor=NSColor.whiteColor;[self refreshPeer];
-    NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(26,258,320,30);tabs.selectedSegment=0;[v addSubview:tabs];
-    self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,530,232)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
-    [self label:@"发送到已配对设备" frame:NSMakeRect(4,175,470,32) size:22 bold:YES view:self.transfer];
-    self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,115,170,38) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
-    [self button:@"打开收件箱" at:NSMakeRect(180,115,124,38) action:@selector(inbox:) view:self.transfer];
+    NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(26,306,320,30);tabs.selectedSegment=0;[v addSubview:tabs];
+    self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,530,280)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
+    [self label:@"发送到已配对设备" frame:NSMakeRect(4,223,470,32) size:22 bold:YES view:self.transfer];
+    self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,163,170,38) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
+    [self button:@"打开收件箱" at:NSMakeRect(180,163,124,38) action:@selector(inbox:) view:self.transfer];
     self.status=[self label:@"正在启动接收服务…" frame:NSMakeRect(4,32,520,25) size:14 bold:NO view:self.transfer];
     self.progress=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(5,17,515,8)];self.progress.indeterminate=YES;self.progress.displayedWhenStopped=NO;[self.transfer addSubview:self.progress];
-    self.info=[self label:@"" frame:NSMakeRect(4,151,520,74) size:14 bold:NO view:self.settings];self.info.maximumNumberOfLines=3;self.info.selectable=YES;
-    self.address=[NSTextField new];self.address.frame=NSMakeRect(4,111,355,27);self.address.placeholderString=@"对方的局域网 IP 或 Tailscale 地址";[self.settings addSubview:self.address];
-    self.code=[NSTextField new];self.code.frame=NSMakeRect(4,73,355,27);self.code.placeholderString=@"对方的 12 位校验码";[self.settings addSubview:self.code];
-    [self button:@"远程连接…" at:NSMakeRect(168,24,126,36) action:@selector(remote:) view:self.settings];
-    self.pairButton=[self button:@"验证并保存配对" at:NSMakeRect(0,24,164,36) action:@selector(pair:) view:self.settings];
+    self.info=[self label:@"" frame:NSMakeRect(4,218,520,56) size:14 bold:NO view:self.settings];self.info.maximumNumberOfLines=3;self.info.selectable=YES;
+    self.address=[NSTextField new];self.address.frame=NSMakeRect(4,180,355,27);self.address.placeholderString=@"对方的局域网 IP 或 Tailscale 地址";[self.settings addSubview:self.address];
+    self.code=[NSTextField new];self.code.frame=NSMakeRect(4,144,355,27);self.code.placeholderString=@"对方的 12 位校验码";[self.settings addSubview:self.code];
+    [self button:@"远程连接…" at:NSMakeRect(168,96,126,36) action:@selector(remote:) view:self.settings];
+    self.pairButton=[self button:@"验证并保存配对" at:NSMakeRect(0,96,164,36) action:@selector(pair:) view:self.settings];
     NSSegmentedControl *mode=[NSSegmentedControl segmentedControlWithLabels:@[@"前台弹窗",@"静默接收"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeMode:)];
-    mode.frame=NSMakeRect(313,26,205,32);mode.selectedSegment=self.silentReceipts?1:0;
+    mode.frame=NSMakeRect(313,98,205,32);mode.selectedSegment=self.silentReceipts?1:0;
     [self.settings addSubview:mode];
+    NSBox *sep=[[NSBox alloc]initWithFrame:NSMakeRect(4,78,520,1)];sep.boxType=NSBoxSeparator;[self.settings addSubview:sep];
+    [self label:@"收件目录" frame:NSMakeRect(4,48,120,20) size:13 bold:NO view:self.settings];
+    self.receiveDirField=[NSTextField new];self.receiveDirField.frame=NSMakeRect(4,16,344,24);self.receiveDirField.editable=NO;self.receiveDirField.selectable=YES;self.receiveDirField.bezeled=YES;self.receiveDirField.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.settings addSubview:self.receiveDirField];
+    [self button:@"更改…" at:NSMakeRect(356,12,76,32) action:@selector(chooseReceiveDir:) view:self.settings];
+    self.resetDirButton=[self button:@"恢复默认" at:NSMakeRect(436,12,88,32) action:@selector(resetReceiveDir:) view:self.settings];
+    [self refreshReceiveDir];
     self.devices=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.devices];self.devices.hidden=YES;
- self.deviceHint=[self label:@"正在查找同一账号的电脑…" frame:NSMakeRect(4,174,518,28) size:14 bold:NO view:self.devices];
- self.picker=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(4,120,390,34) pullsDown:NO];[self.devices addSubview:self.picker];
- [self button:@"配对所选电脑" at:NSMakeRect(0,60,165,38) action:@selector(connectDevice:) view:self.devices];
- [self button:@"远程连接…" at:NSMakeRect(168,60,125,38) action:@selector(remote:) view:self.devices];
+ self.deviceHint=[self label:@"正在查找同一账号的电脑…" frame:NSMakeRect(4,222,518,28) size:14 bold:NO view:self.devices];
+ self.picker=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(4,168,390,34) pullsDown:NO];[self.devices addSubview:self.picker];
+ [self button:@"配对所选电脑" at:NSMakeRect(0,108,165,38) action:@selector(connectDevice:) view:self.devices];
+ [self button:@"远程连接…" at:NSMakeRect(168,108,125,38) action:@selector(remote:) view:self.devices];
  self.scanTimer=[NSTimer scheduledTimerWithTimeInterval:5 repeats:YES block:^(NSTimer *timer){[self refreshPeer];[self scan];}];
  [self.window center];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--background-receiver"]) {

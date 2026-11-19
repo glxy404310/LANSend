@@ -226,8 +226,57 @@ func dashboard(root string, initial []string) error {
 	var tabs *walk.TabWidget
 	var picker *walk.ComboBox
 	var hint *walk.Label
+	var saveDirEdit *walk.LineEdit
+	var resetDirButton *walk.PushButton
 	var choices []accountDevice
 	var scanning bool
+	currentSaveDir := func() string {
+		dir, err := receiveDir(root)
+		if err != nil {
+			return ""
+		}
+		return dir
+	}
+	showSaveDir := func() {
+		if saveDirEdit != nil {
+			dir := currentSaveDir()
+			if saveDirEdit.Text() != dir {
+				saveDirEdit.SetText(dir)
+			}
+		}
+		if resetDirButton != nil {
+			resetDirButton.SetEnabled(isCustomReceiveDir(root))
+		}
+	}
+	chooseSaveDir := func() {
+		if busy {
+			return
+		}
+		dlg := walk.FileDialog{Title: "选择收件保存文件夹"}
+		ok, err := dlg.ShowBrowseFolder(w)
+		if err != nil {
+			walk.MsgBox(w, "选择文件夹", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
+		if !ok {
+			return
+		}
+		if _, err = setReceiveDir(root, dlg.FilePath); err != nil {
+			walk.MsgBox(w, "收件目录", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
+		showSaveDir()
+	}
+	resetSaveDir := func() {
+		if busy {
+			return
+		}
+		if _, err := setReceiveDir(root, ""); err != nil {
+			walk.MsgBox(w, "收件目录", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
+		showSaveDir()
+	}
 	refresh := func() {
 		if busy || scanning || tabs == nil || picker == nil || hint == nil || tabs.CurrentIndex() != 2 {
 			return
@@ -299,15 +348,21 @@ func dashboard(root string, initial []string) error {
 		}()
 	}
 	inbox := func() {
-		home, _ := os.UserHomeDir()
-		p := filepath.Join(home, "Downloads", "LANSend")
+		p, err := receiveDir(root)
+		if err == nil {
+			err = os.MkdirAll(p, 0700)
+		}
+		if err != nil {
+			walk.MsgBox(w, "打开收件箱", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
 		if e := exec.Command(filepath.Join(os.Getenv("SystemRoot"), "explorer.exe"), p).Start(); e != nil {
 			walk.MsgBox(w, "打开收件箱", e.Error(), walk.MsgBoxIconWarning)
 		}
 	}
 	dark := walk.RGB(19, 53, 61)
 	white := walk.RGB(255, 255, 255)
-	mw := d.MainWindow{AssignTo: &w, Title: "LANSend", Size: d.Size{Width: 580, Height: 485}, MinSize: d.Size{Width: 500, Height: 450}, Font: d.Font{Family: "Segoe UI", PointSize: 10}, Layout: d.VBox{MarginsZero: true, SpacingZero: true}, OnDropFiles: sendFiles, Children: []d.Widget{
+	mw := d.MainWindow{AssignTo: &w, Title: "LANSend", Size: d.Size{Width: 580, Height: 525}, MinSize: d.Size{Width: 500, Height: 490}, Font: d.Font{Family: "Segoe UI", PointSize: 10}, Layout: d.VBox{MarginsZero: true, SpacingZero: true}, OnDropFiles: sendFiles, Children: []d.Widget{
 		d.Composite{Background: d.SolidColorBrush{Color: dark}, Layout: d.VBox{Margins: d.Margins{Left: 24, Top: 16, Right: 24, Bottom: 16}}, Children: []d.Widget{
 			d.Label{Text: "LANSend", Font: d.Font{Family: "Segoe UI", PointSize: 23, Bold: true}, TextColor: white}, d.Label{AssignTo: &peerText, TextColor: white}}},
 		d.Composite{Layout: d.VBox{Margins: d.Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 10}, Children: []d.Widget{
@@ -315,6 +370,7 @@ func dashboard(root string, initial []string) error {
 				refresh()
 				if tabs != nil && tabs.CurrentIndex() == 1 {
 					showLocalIP()
+					showSaveDir()
 				}
 			}, Pages: []d.TabPage{
 				{Title: "文件传输", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
@@ -326,6 +382,11 @@ func dashboard(root string, initial []string) error {
 							silent.SetChecked(receiptsSilent(root))
 							walk.MsgBox(w, "收件设置", err.Error(), walk.MsgBoxIconWarning)
 						}
+					}}, d.HSeparator{}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{
+						d.Label{Text: "收件目录"},
+						d.LineEdit{AssignTo: &saveDirEdit, ReadOnly: true, Text: currentSaveDir()},
+						d.PushButton{Text: "更改…", OnClicked: chooseSaveDir},
+						d.PushButton{AssignTo: &resetDirButton, Text: "恢复默认", Enabled: isCustomReceiveDir(root), OnClicked: resetSaveDir},
 					}}, d.VSpacer{}}},
 				{Title: "我的电脑", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
 					d.Label{AssignTo: &hint, Text: "正在查找同一账号的电脑…"}, d.ComboBox{AssignTo: &picker},

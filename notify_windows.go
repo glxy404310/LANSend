@@ -22,11 +22,17 @@ func revealReceived(raw string) error {
 	if e != nil || !utf8.Valid(name) || !safeName(string(name)) {
 		return errors.New("invalid file name")
 	}
-	home, e := os.UserHomeDir()
+	var dir string
+	if cfgDir, err := os.UserConfigDir(); err == nil {
+		dir, e = receiveDir(filepath.Join(cfgDir, "LANSend"))
+	}
+	if dir == "" {
+		dir, e = defaultReceiveDir()
+	}
 	if e != nil {
 		return e
 	}
-	path := filepath.Join(home, "Downloads", "LANSend", string(name))
+	path := filepath.Join(dir, string(name))
 	wide, e := syscall.UTF16PtrFromString(path)
 	if e != nil {
 		return e

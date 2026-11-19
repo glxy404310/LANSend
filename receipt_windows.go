@@ -38,11 +38,7 @@ func receive(root string) error {
 	var files *walk.ComboBox
 	var title *walk.Label
 	var names []string
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	folder := filepath.Join(home, "Downloads", "LANSend")
+	var paths []string
 	open := func(path string) {
 		target, err := syscall.UTF16PtrFromString(path)
 		if err != nil || windows.ShellExecute(windows.Handle(w.Handle()), syscall.StringToUTF16Ptr("open"), target, nil, nil, win.SW_SHOWNORMAL) != nil {
@@ -55,11 +51,22 @@ func receive(root string) error {
 		d.Composite{Layout: d.HBox{}, Children: []d.Widget{
 			d.PushButton{Text: "打开文件", OnClicked: func() {
 				i := files.CurrentIndex()
-				if i >= 0 && i < len(names) {
-					open(filepath.Join(folder, names[i]))
+				if i >= 0 && i < len(paths) {
+					open(paths[i])
 				}
 			}},
-			d.PushButton{Text: "打开收件夹", OnClicked: func() { open(folder) }},
+			d.PushButton{Text: "打开收件夹", OnClicked: func() {
+				if i := files.CurrentIndex(); i >= 0 && i < len(paths) {
+					open(filepath.Dir(paths[i]))
+					return
+				}
+				dir, err := receiveDir(root)
+				if err != nil {
+					walk.MsgBox(w, "打开收件夹", err.Error(), walk.MsgBoxIconWarning)
+					return
+				}
+				open(dir)
+			}},
 		}},
 	}}
 	if err := ui.Create(); err != nil {
@@ -70,6 +77,7 @@ func receive(root string) error {
 		*cancel = true
 		w.Hide()
 		names = nil
+		paths = nil
 		files.SetModel([]string{})
 	})
 	saved := func(path string) {
@@ -83,6 +91,7 @@ func receive(root string) error {
 			first := !w.Visible()
 			index := files.CurrentIndex()
 			names = append(names, filepath.Base(path))
+			paths = append(paths, path)
 			files.SetModel(names)
 			if index < 0 {
 				index = 0

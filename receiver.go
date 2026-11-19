@@ -105,15 +105,10 @@ func serveFiles(root string, onSaved func(string)) error {
 	if e != nil {
 		return e
 	}
-	home, e := os.UserHomeDir()
-	if e != nil {
-		return e
+	if dest, err := receiveDir(root); err == nil {
+		_ = os.MkdirAll(dest, 0700)
 	}
-	dest := filepath.Join(home, "Downloads", "LANSend")
-	if e = os.MkdirAll(dest, 0700); e != nil {
-		return e
-	}
-	srv := http.Server{Addr: ":" + port, Handler: routes(root, dest, onSaved), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequestClientCert}, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	srv := http.Server{Addr: ":" + port, Handler: routes(root, onSaved), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequestClientCert}, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	node := &embeddedNode{root: root, self: digest(cert.Certificate[0]), tlsConfig: srv.TLSConfig.Clone(), handler: srv.Handler}
 	mux := http.NewServeMux()
 	mux.Handle("/", srv.Handler)
@@ -125,7 +120,7 @@ func serveFiles(root string, onSaved func(string)) error {
 	defer node.stop()
 	return srv.ListenAndServeTLS("", "")
 }
-func routes(root, dest string, received func(string)) http.Handler {
+func routes(root string, received func(string)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+api+"info", func(w http.ResponseWriter, r *http.Request) {
 		host, _ := os.Hostname()
@@ -143,9 +138,17 @@ func routes(root, dest string, received func(string)) http.Handler {
 			http.Error(w, "文件名不兼容或缺少长度", 400)
 			return
 		}
+		dest, e := receiveDir(root)
+		if e == nil {
+			e = os.MkdirAll(dest, 0700)
+		}
+		if e != nil {
+			http.Error(w, "保存失败，请检查接收目录和目录权限", 500)
+			return
+		}
 		path, e := saveFile(dest, name, r.Body, r.ContentLength)
 		if e != nil {
-			http.Error(w, "保存失败，请检查磁盘空间、文件名和目录权限", 500)
+			http.Error(w, "保存失败，请检查接收目录、磁盘空间、文件名和目录权限", 500)
 			return
 		}
 		received(path)
