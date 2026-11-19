@@ -1,6 +1,6 @@
 # LANSend
 
-**当前版本 `v1.6.0`** · [Windows x64 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/LANSend-Windows-x64.zip) · [macOS 通用 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/SHA256SUMS.txt)
+**当前版本 `v1.6.1`** · [Windows x64 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/LANSend-Windows-x64.zip) · [macOS 通用 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/SHA256SUMS.txt)
 
 LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Windows↔Windows、macOS↔macOS 及 Windows↔macOS 1 对 1 互传），使用 HTTPS 双向证书校验传输文件。支持通过资源管理器或 Finder 右键菜单快速发送，也支持内置 Tailscale（`tsnet`）跨网络直连。文件保存后，接收端默认弹出前台小窗口以便打开文件或收件夹，也可切换为静默接收。
 
@@ -30,7 +30,7 @@ LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Wind
 
 ## 更新日志（Release Notes）
 
-### 最新变更（待发布）
+### v1.6.1
 
 - 自动检测本机主物理网卡，「配对与设置」页仅显示单个真实的局域网 IPv4 地址，自动过滤 WSL / Hyper-V、VMware / VirtualBox、Clash TUN、Tailscale 及 `169.254.x.x` 等虚拟或无效地址，并在切换页签与网络变化时刷新。
 - 支持 Windows↔Windows、macOS↔macOS 与 Windows↔macOS 1 对 1 互传：统一窗口标题与右键菜单入口为「发送到已配对设备」/「用 LANSend 发送」，升级时自动清理旧入口。
