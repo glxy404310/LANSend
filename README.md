@@ -1,6 +1,6 @@
 # LANSend
 
-**当前版本 `v1.6.1`** · [Windows x64 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/LANSend-Windows-x64.zip) · [macOS 通用 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.6.1/SHA256SUMS.txt)
+**当前版本 `v1.6.2`** · [Windows x64 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.2/LANSend-Windows-x64.zip) · [macOS 通用 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.2/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.6.2/SHA256SUMS.txt)
 
 LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Windows↔Windows、macOS↔macOS 及 Windows↔macOS 1 对 1 互传），使用 HTTPS 双向证书校验传输文件。支持通过资源管理器或 Finder 右键菜单快速发送，也支持内置 Tailscale（`tsnet`）跨网络直连。文件保存后，接收端默认弹出前台小窗口以便打开文件或收件夹，也可切换为静默接收。
 
@@ -29,6 +29,11 @@ LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Wind
 - **接收方式**：文件默认保存至 `Downloads/LANSend`（重名自动编号），也可在「配对与设置」的「收件目录」中自定义保存路径或随时恢复默认（修改后即时生效）。同一页面支持切换前台弹窗或静默接收，重启后沿用；关闭主窗口后接收服务仍在当前登录会话中运行。
 
 ## 更新日志（Release Notes）
+
+### v1.6.2
+
+- Windows 与 macOS「配对与设置」页新增自定义收件目录设置：支持通过系统文件夹选择器更改保存位置并校验写入权限，也可随时一键恢复默认目录（`Downloads/LANSend`），修改后对后续来件即时生效，无需重启后台接收服务。
+- 同步更新主窗口「打开收件箱」与前台收件弹窗的「打开文件 / 打开收件夹」行为，确保切换目录前后收到的文件均可准确打开。
 
 ### v1.6.1
 
