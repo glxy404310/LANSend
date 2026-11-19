@@ -6,7 +6,7 @@ engine="$app/Contents/Resources/engine"
 test_home=$(mktemp -d)
 export HOME="$test_home" CFFIXED_USER_HOME="$test_home"
 codesign --verify --deep --strict "$app"
-for binary in "$engine" "$app/Contents/MacOS/LANSend"; do lipo -verify_arch arm64 x86_64 "$binary"; done
+for binary in "$engine" "$app/Contents/MacOS/LANSend"; do lipo "$binary" -verify_arch arm64 x86_64; done
 xcrun clang -fobjc-arc -framework Cocoa mac-desktop/tests/receipts.m -o "$test_home/receipt-test"
 "$test_home/receipt-test"
 "$app/Contents/MacOS/LANSend" --background-receiver &

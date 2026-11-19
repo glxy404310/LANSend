@@ -25,7 +25,8 @@ public class ReceiptUI {
  [DllImport("user32",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder buf,int n);
  [DllImport("user32",CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] static extern IntPtr Read(IntPtr h,int msg,IntPtr count,StringBuilder text);
  [DllImport("user32",CharSet=CharSet.Unicode)] public static extern IntPtr SendMessage(IntPtr h,int msg,IntPtr w,IntPtr l);
- [DllImport("user32",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls,string title);
+ [DllImport("user32",CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls,string title);
+ public static IntPtr Receipt(){return FindWindow(null,"LANSend 收件");}
  [DllImport("user32")] public static extern bool IsWindowVisible(IntPtr h);
  public static IntPtr Child(IntPtr parent,string title,string cls){
   IntPtr found=IntPtr.Zero;
@@ -44,7 +45,7 @@ function Run-Engine([string[]]$argv){
  if(!$process.WaitForExit(30000)){ $process.Kill(); throw "Timed out: $($argv[0])" }
  Assert-That ($process.ExitCode -eq 0) "Failed: $($argv[0])"
 }
-function Receipt { [ReceiptUI]::FindWindow($null,'LANSend 收件') }
+function Receipt { [ReceiptUI]::Receipt() }
 function Dashboard {
  $p=Start-Process $desktop -PassThru
  for($i=0;$i -lt 50;$i++){Start-Sleep -Milliseconds 200;$p.Refresh();if($p.MainWindowHandle -ne 0){return $p}}
@@ -64,7 +65,9 @@ try {
  [IO.File]::WriteAllText($source,'LANSend QA')
  Run-Engine @('send',('"{0}"' -f $source),('"{0}"' -f $source))
  for($i=0;$i -lt 50;$i++){Start-Sleep -Milliseconds 100;$panel=Receipt;if([ReceiptUI]::IsWindowVisible($panel)){break}}
- Assert-That ([ReceiptUI]::IsWindowVisible($panel)) 'Front window missing'
+ $rx.Refresh()
+ Write-Output "Receiver exited=$($rx.HasExited), panel handle=$panel, process window=$($rx.MainWindowHandle)"
+ Assert-That ([ReceiptUI]::IsWindowVisible($panel)) 'Front window missing' 
  foreach($button in @('打开文件','打开收件夹')){
   Assert-That ([ReceiptUI]::Child($panel,$button,'BUTTON') -ne [IntPtr]::Zero) "Missing action $button"
  }
