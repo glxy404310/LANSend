@@ -50,13 +50,13 @@ status=$?
 if [ "$status" -eq 0 ]; then
 /usr/bin/osascript - "$msg" &lt;&lt;'OSA'
 on run args
-display notification (item 1 of args) with title "发送到 Windows"
+display notification (item 1 of args) with title "用 LANSend 发送"
 end run
 OSA
 else
 /usr/bin/osascript - "$msg" &lt;&lt;'OSA'
 on run args
-display alert "发送到 Windows 失败" message (item 1 of args)
+display alert "LANSend 发送失败" message (item 1 of args)
 end run
 OSA
 fi

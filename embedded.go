@@ -34,6 +34,7 @@ type embeddedNode struct {
 	handler                  http.Handler
 	server                   *tsnet.Server
 	proxyAddr, proxyPassword string
+	aliases                  map[string]peerAliasEntry
 }
 
 func (n *embeddedNode) start() error {
@@ -72,6 +73,7 @@ func (n *embeddedNode) stop() {
 		n.server = nil
 		n.proxyAddr = ""
 		n.proxyPassword = ""
+		n.aliases = nil
 	}
 }
 func (n *embeddedNode) status(ctx context.Context, proxy bool) (nodeStatus, error) {

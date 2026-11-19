@@ -2,7 +2,7 @@
 
 **当前版本 `v1.6.0`** · [Windows x64 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/LANSend-Windows-x64.zip) · [macOS 通用 ZIP](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.6.0/SHA256SUMS.txt)
 
-LANSend 是 Windows 与 macOS 之间的点对点文件互传工具，使用 HTTPS 双向证书校验传输文件。支持通过资源管理器或 Finder 右键菜单快速发送，也支持内置 Tailscale（`tsnet`）跨网络直连。文件保存后，接收端默认弹出前台小窗口以便打开文件或收件夹，也可切换为静默接收。
+LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Windows↔Windows、macOS↔macOS 及 Windows↔macOS 1 对 1 互传），使用 HTTPS 双向证书校验传输文件。支持通过资源管理器或 Finder 右键菜单快速发送，也支持内置 Tailscale（`tsnet`）跨网络直连。文件保存后，接收端默认弹出前台小窗口以便打开文件或收件夹，也可切换为静默接收。
 
 ## 支持平台
 
@@ -24,8 +24,8 @@ LANSend 是 Windows 与 macOS 之间的点对点文件互传工具，使用 HTTP
 ### 日常使用
 
 - **同一局域网**：打开「配对与设置」，输入对方的局域网地址与 12 位校验码保存配对（默认端口 `TCP 53318`）。
-- **不同网络**：在「我的电脑 → 远程连接」登录同一个 Tailscale 账号，选中同账号在线设备后点击「配对所选电脑」即可双向配对。
-- **发送文件**：在主窗口选择或拖入文件，或通过 Windows 资源管理器右键「发送到 → 发送到 Mac」/ macOS Finder 右键「快速操作 / 服务 → 发送到 Windows」发送。文件夹请先压缩。
+- **不同网络**：在「我的电脑 → 远程连接」登录同一个 Tailscale 账号，列表会结合对方主机名（或 Tailscale 自定义设备名）与平台短标识展示同账号在线设备，选中后点击「配对所选电脑」即可双向配对。
+- **发送文件**：在主窗口选择或拖入文件，或通过 Windows 资源管理器右键「发送到 → 用 LANSend 发送」/ macOS Finder 右键「快速操作 / 服务 → 用 LANSend 发送」发送（从旧版升级时会自动清理原「发送到 Mac」/「发送到 Windows」入口）。文件夹请先压缩。
 - **接收方式**：文件默认保存至 `Downloads/LANSend`（重名自动编号）。在「配对与设置」可切换前台弹窗或静默接收，重启后沿用；关闭主窗口后接收服务仍在当前登录会话中运行。
 
 ## 从源码构建

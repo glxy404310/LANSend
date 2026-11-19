@@ -283,7 +283,7 @@ func run(args []string) error {
 func sendSaved(root string, paths []string, progress transferProgress) error {
 	b, e := os.ReadFile(filepath.Join(root, "peer.json"))
 	if e != nil {
-		return errors.New("请先在设备配对中连接对方电脑")
+		return errors.New("请先在配对与设置中连接对方电脑")
 	}
 	var c config
 	if e = json.Unmarshal(b, &c); e != nil {

@@ -15,7 +15,9 @@ if ! cmp -s engine "$target/lansend"; then
   install -m 755 engine "$temp"
   mv -f "$temp" "$target/lansend"
 fi
-ditto '发送到 Windows.workflow' "$services/发送到 Windows.workflow"
+rm -rf "$services/发送到 Windows.workflow"
+ditto '用 LANSend 发送.workflow' "$services/用 LANSend 发送.workflow"
+/System/Library/CoreServices/pbs -flush >/dev/null 2>&1 || true
 # Login opens the application. Only the application launches the receiver.
 temp=$(mktemp "$agents/.lansend.XXXXXXXX")
 trap 'rm -f "$temp"' EXIT

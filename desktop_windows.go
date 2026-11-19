@@ -318,7 +318,7 @@ func dashboard(root string, initial []string) error {
 				}
 			}, Pages: []d.TabPage{
 				{Title: "文件传输", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
-					d.Label{Text: "发送到 Mac", Font: d.Font{Family: "Segoe UI", PointSize: 16, Bold: true}}, d.Label{Text: "可多选文件，或直接拖入此窗口发送。"},
+					d.Label{Text: "发送到已配对设备", Font: d.Font{Family: "Segoe UI", PointSize: 16, Bold: true}}, d.Label{Text: "可多选文件，或直接拖入此窗口发送。"},
 					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &sendButton, Text: "选择文件并发送…", OnClicked: choose}, d.PushButton{Text: "打开收件箱", OnClicked: inbox}, d.HSpacer{}}}, d.VSpacer{}, d.Label{AssignTo: &status, Text: "等待发送"}, d.ProgressBar{AssignTo: &bar, MaxValue: 100}}},
 				{Title: "配对与设置", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}}, Children: []d.Widget{
 					d.Label{AssignTo: &localAddr, Text: formatLocalIP()}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.CheckBox{AssignTo: &silent, Text: "静默接收（关闭时前台弹窗）", Checked: receiptsSilent(root), OnClicked: func() {

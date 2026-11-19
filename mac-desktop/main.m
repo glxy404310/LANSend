@@ -226,7 +226,7 @@
     self.peer=[self label:@"" frame:NSMakeRect(30,21,520,24) size:14 bold:NO view:header];self.peer.textColor=NSColor.whiteColor;[self refreshPeer];
     NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(26,258,320,30);tabs.selectedSegment=0;[v addSubview:tabs];
     self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,530,232)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
-    [self label:@"发送到 Windows" frame:NSMakeRect(4,175,470,32) size:22 bold:YES view:self.transfer];
+    [self label:@"发送到已配对设备" frame:NSMakeRect(4,175,470,32) size:22 bold:YES view:self.transfer];
     self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,115,170,38) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
     [self button:@"打开收件箱" at:NSMakeRect(180,115,124,38) action:@selector(inbox:) view:self.transfer];
     self.status=[self label:@"正在启动接收服务…" frame:NSMakeRect(4,32,520,25) size:14 bold:NO view:self.transfer];

@@ -12,7 +12,8 @@ function Link($folder,$name,$target,$arguments) {
   $link.WorkingDirectory=$dir
   $link.Save()
 }
+Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('SendTo')) '发送到 Mac.lnk') -Force -ErrorAction SilentlyContinue
 Link 'Programs' 'LANSend.lnk' $exe ''
-Link 'SendTo' '发送到 Mac.lnk' $exe 'menu'
+Link 'SendTo' '用 LANSend 发送.lnk' $exe 'menu'
 Link 'Startup' 'LANSend Receiver.lnk' $rx 'receive'
 Start-Process -FilePath $rx -ArgumentList receive
