@@ -9,6 +9,7 @@ codesign --verify --deep --strict "$app"
 for binary in "$engine" "$app/Contents/MacOS/LANSend"; do lipo "$binary" -verify_arch arm64 x86_64; done
 xcrun clang -fobjc-arc -framework Cocoa mac-desktop/tests/receipts.m -o "$test_home/receipt-test"
 "$test_home/receipt-test"
+xcrun clang -fobjc-arc -framework CoreGraphics -framework Foundation mac-desktop/tests/window-visible.m -o "$test_home/window-visible"
 "$app/Contents/MacOS/LANSend" --background-receiver &
 app_pid=$!
 trap 'kill "${engine_pid:-}" "$app_pid" 2>/dev/null || true' EXIT
@@ -27,7 +28,17 @@ PY
 printf 'Mac receipt QA' > "$HOME/收件.txt"
 "$engine" send "$HOME/收件.txt" "$HOME/收件.txt"
 cmp "$HOME/收件.txt" "$HOME/Downloads/LANSend/收件 (1).txt"
+for i in {1..30}; do "$test_home/window-visible" "$app_pid" && break; sleep .2; done
+"$test_home/window-visible" "$app_pid"
 touch "$config/silent-receipts"
+kill "$engine_pid" "$app_pid"
+wait "$app_pid" || true
+"$app/Contents/MacOS/LANSend" --background-receiver &
+app_pid=$!
+"$engine" ready
+engine_pid=$(pgrep -P "$app_pid" -x engine)
 "$engine" send "$HOME/收件.txt"
 cmp "$HOME/收件.txt" "$HOME/Downloads/LANSend/收件 (2).txt"
+sleep .5
+if "$test_home/window-visible" "$app_pid"; then echo 'Unexpected silent window'; exit 1; fi
 echo 'PASS Mac packaged app, direct engine, HTTPS batch/silent saves, native mode and window regression'
