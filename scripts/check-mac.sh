@@ -16,7 +16,7 @@ trap 'kill "${engine_pid:-}" "$app_pid" 2>/dev/null || true' EXIT
 config="$HOME/Library/Application Support/LANSend"
 for i in {1..60}; do [[ -s "$config/identity.json" ]] && break; sleep .25; done
 "$engine" ready
-engine_pid=$(pgrep -P "$app_pid" -x engine)
+engine_pid=$(pgrep -P "$app_pid" -f '/engine receive$')
 test -n "$engine_pid"
 python3 - "$config" <<'PY'
 import hashlib,json,pathlib,ssl,sys
@@ -36,7 +36,7 @@ wait "$app_pid" || true
 "$app/Contents/MacOS/LANSend" --background-receiver &
 app_pid=$!
 "$engine" ready
-engine_pid=$(pgrep -P "$app_pid" -x engine)
+engine_pid=$(pgrep -P "$app_pid" -f '/engine receive$')
 "$engine" send "$HOME/收件.txt"
 cmp "$HOME/收件.txt" "$HOME/Downloads/LANSend/收件 (2).txt"
 sleep .5
