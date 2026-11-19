@@ -15,13 +15,7 @@ import (
 var errPeerCertificateChanged = errors.New("接收端证书已变化，请核对设备并重新配对")
 
 func sendFailure(err error, path string, completed, total int, bothRoutes bool) error {
-	peer := "对方电脑"
-	switch runtime.GOOS {
-	case "darwin":
-		peer = "Windows 电脑"
-	case "windows":
-		peer = "Mac"
-	}
+	const peer = "已配对设备"
 	var op *net.OpError
 	var request *url.Error
 	var fs *os.PathError
@@ -36,7 +30,7 @@ func sendFailure(err error, path string, completed, total int, bothRoutes bool) 
 	case errors.As(err, &fs):
 		message = "无法读取文件，请确认文件仍在原位置且可以打开。"
 	case errors.As(err, &dns):
-		message = "找不到对方的网络地址，请检查网络连接和设备配对中的地址。"
+		message = "找不到对方的网络地址，请检查网络连接和配对与设置中的地址。"
 	case errors.Is(err, syscall.ECONNREFUSED) || (runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10061))):
 		message = fmt.Sprintf("%s拒绝了连接。请在对方电脑上打开 LANSend，等接收服务就绪后重试。", peer)
 	case errors.As(err, &op) && op.Op == "dial":

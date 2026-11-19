@@ -9,7 +9,8 @@ res="$app/Resources"
 mkdir -p "$app/MacOS" "$res"
 cp mac-desktop/Info.plist "$app/Info.plist"
 cp mac-desktop/AppIcon.icns mac-desktop/Setup.sh "$res/"
-ditto --noextattr --norsrc 'mac-desktop/发送到 Windows.workflow' "$res/发送到 Windows.workflow"
+rm -rf "$res/发送到 Windows.workflow"
+ditto --noextattr --norsrc 'mac-desktop/用 LANSend 发送.workflow' "$res/用 LANSend 发送.workflow"
 for arch in amd64 arm64; do
   CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "$out/core-$arch" .
 done

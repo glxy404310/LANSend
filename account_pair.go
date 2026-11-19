@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,14 +15,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
+	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
 type accountDevice struct{ ID, Name, IP string }
+
+type peerAliasEntry struct {
+	ip      string
+	alias   string
+	expires time.Time
+}
 
 var errPeerOccupied = errors.New("已有另一台已配对电脑。如需更换，请使用手动配对")
 
@@ -184,10 +193,224 @@ func (n *embeddedNode) deviceControl(w http.ResponseWriter, r *http.Request, id 
 		json.NewEncoder(w).Encode(nodeStatus{})
 		return
 	}
-	_, st, e := n.accountSnapshot(ctx)
+	s, st, e := n.accountSnapshot(ctx)
 	if e != nil {
 		http.Error(w, e.Error(), 409)
 		return
 	}
-	json.NewEncoder(w).Encode(nodeStatus{Devices: accountDevices(st)})
+	json.NewEncoder(w).Encode(nodeStatus{Devices: n.enrichAccountDevices(ctx, s, st, accountDevices(st))})
+}
+
+func sanitizeDisplayName(raw string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, raw)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if len(cleaned) > len(".local") && strings.EqualFold(cleaned[len(cleaned)-len(".local"):], ".local") {
+		cleaned = strings.TrimSpace(cleaned[:len(cleaned)-len(".local")])
+	}
+	if utf8.RuneCountInString(cleaned) > 48 {
+		cleaned = string([]rune(cleaned)[:47]) + "…"
+	}
+	return cleaned
+}
+
+func parseNodeMeta(hostName, peerOS string) (string, string) {
+	osName := func(raw string) string {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "windows":
+			return "Windows"
+		case "darwin", "macos":
+			return "macOS"
+		case "linux":
+			return "Linux"
+		default:
+			return ""
+		}
+	}
+	var osLabel, shortID string
+	if rest, ok := strings.CutPrefix(hostName, "lansend-"); ok {
+		if i := strings.LastIndexByte(rest, '-'); i > 0 && i+1 < len(rest) {
+			osLabel = osName(rest[:i])
+			shortID = rest[i+1:]
+		}
+	}
+	if osLabel == "" {
+		osLabel = osName(peerOS)
+	}
+	return osLabel, shortID
+}
+
+func customTailscaleAlias(dnsName, hostName string) string {
+	label := strings.TrimSuffix(strings.TrimSpace(dnsName), ".")
+	if i := strings.IndexByte(label, '.'); i >= 0 {
+		label = label[:i]
+	}
+	label = sanitizeDisplayName(label)
+	if label == "" {
+		return ""
+	}
+	base := strings.ToLower(strings.TrimSpace(hostName))
+	lower := strings.ToLower(label)
+	if base != "" && (lower == base || strings.HasPrefix(lower, base+"-")) {
+		return ""
+	}
+	return label
+}
+
+func formatDeviceName(hostName, dnsName, peerOS, remoteAlias string) string {
+	osLabel, shortID := parseNodeMeta(hostName, peerOS)
+	primary := customTailscaleAlias(dnsName, hostName)
+	if primary == "" {
+		remote := sanitizeDisplayName(remoteAlias)
+		if remote != "" && !strings.EqualFold(remote, hostName) {
+			primary = remote
+		}
+	}
+	if primary != "" {
+		switch {
+		case osLabel != "" && shortID != "":
+			return fmt.Sprintf("%s (%s · %s)", primary, osLabel, shortID)
+		case shortID != "":
+			return fmt.Sprintf("%s (%s)", primary, shortID)
+		case osLabel != "":
+			return fmt.Sprintf("%s (%s)", primary, osLabel)
+		default:
+			return primary
+		}
+	}
+	if osLabel != "" && shortID != "" {
+		return fmt.Sprintf("%s (%s)", osLabel, shortID)
+	}
+	return hostName
+}
+
+func probePeerAlias(ctx context.Context, cl *http.Client, ip string) (string, bool) {
+	pctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(pctx, http.MethodGet, "https://"+net.JoinHostPort(ip, port)+api+"info", nil)
+	if err != nil {
+		return "", false
+	}
+	resp, err := cl.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var info struct{ Alias, Version string }
+	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&info) != nil || info.Version != "1" {
+		return "", false
+	}
+	alias := sanitizeDisplayName(info.Alias)
+	if alias == "" {
+		return "", false
+	}
+	return alias, true
+}
+
+func (n *embeddedNode) enrichAccountDevices(ctx context.Context, s *tsnet.Server, st *ipnstate.Status, devices []accountDevice) []accountDevice {
+	if len(devices) == 0 {
+		return devices
+	}
+	peersByID := make(map[string]*ipnstate.PeerStatus, len(st.Peer))
+	for _, p := range st.Peer {
+		if p != nil && p.ID != "" {
+			peersByID[string(p.ID)] = p
+		}
+	}
+	aliases := make([]string, len(devices))
+	var pending []int
+	now := time.Now()
+	n.mu.Lock()
+	for i, d := range devices {
+		p := peersByID[d.ID]
+		if p != nil && customTailscaleAlias(p.DNSName, d.Name) != "" {
+			continue
+		}
+		if entry, ok := n.aliases[d.ID]; ok && entry.ip == d.IP && now.Before(entry.expires) {
+			aliases[i] = entry.alias
+			continue
+		}
+		pending = append(pending, i)
+	}
+	n.mu.Unlock()
+
+	if len(pending) > 0 {
+		cl := &http.Client{
+			Transport: &http.Transport{
+				DialContext:           s.Dial,
+				TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true},
+				TLSHandshakeTimeout:   1500 * time.Millisecond,
+				ResponseHeaderTimeout: 1500 * time.Millisecond,
+			},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
+		defer cl.CloseIdleConnections()
+		probed := make([]string, len(pending))
+		okList := make([]bool, len(pending))
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
+		for j, idx := range pending {
+			wg.Add(1)
+			go func(pos, devIdx int, ip string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				probed[pos], okList[pos] = probePeerAlias(ctx, cl, ip)
+			}(j, idx, devices[idx].IP)
+		}
+		wg.Wait()
+		fetchedAt := time.Now()
+		n.mu.Lock()
+		if n.server == s {
+			if n.aliases == nil {
+				n.aliases = make(map[string]peerAliasEntry)
+			}
+			for j, idx := range pending {
+				d := devices[idx]
+				ttl := 15 * time.Second
+				if okList[j] {
+					ttl = 60 * time.Second
+					aliases[idx] = probed[j]
+				}
+				n.aliases[d.ID] = peerAliasEntry{ip: d.IP, alias: probed[j], expires: fetchedAt.Add(ttl)}
+			}
+			if len(n.aliases) > 64 {
+				for id := range n.aliases {
+					if _, alive := peersByID[id]; !alive {
+						delete(n.aliases, id)
+					}
+				}
+			}
+		} else {
+			for j, idx := range pending {
+				if okList[j] {
+					aliases[idx] = probed[j]
+				}
+			}
+		}
+		n.mu.Unlock()
+	}
+
+	for i, d := range devices {
+		var dnsName, peerOS string
+		if p := peersByID[d.ID]; p != nil {
+			dnsName = p.DNSName
+			peerOS = p.OS
+		}
+		devices[i].Name = formatDeviceName(d.Name, dnsName, peerOS, aliases[i])
+	}
+	sort.Slice(devices, func(i, j int) bool {
+		if devices[i].Name == devices[j].Name {
+			return devices[i].ID < devices[j].ID
+		}
+		return devices[i].Name < devices[j].Name
+	})
+	return devices
 }

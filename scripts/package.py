@@ -47,7 +47,7 @@ if __name__ == "__main__":
     mac = args.output / "LANSend-macOS-universal.zip"
     package(windows, [(args.windows_exe, "LANSend.exe")], notices(args.windows_exe))
     resources = "Contents/Resources/"
-    workflow = resources + "发送到 Windows.workflow/Contents/"
+    workflow = resources + "用 LANSend 发送.workflow/Contents/"
     members = ["Contents/MacOS/LANSend", "Contents/Info.plist", resources + "engine",
                resources + "Setup.sh", resources + "AppIcon.icns", workflow + "Info.plist",
                workflow + "document.wflow", "Contents/_CodeSignature/CodeResources"]
