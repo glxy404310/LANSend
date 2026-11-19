@@ -1,0 +1,17 @@
+/build/
+/dist/
+/vendor/
+/LANSend.exe
+/lansend
+.DS_Store
+._*
+*.test
+*.zip
+*.log
+
+# Local LANSend identities and account state
+identity.json
+peer.json
+peer.json.lock
+remote-enabled
+/tsnet/
