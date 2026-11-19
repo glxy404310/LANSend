@@ -1,25 +1,38 @@
 #!/bin/bash
 set -eu
 cd "$(dirname "$0")"
+app="$(cd ../.. && pwd -P)"
 target="$HOME/Library/Application Support/LANSend"
 services="$HOME/Library/Services"
+agents="$HOME/Library/LaunchAgents"
+agent="$agents/local.lansend.receiver.plist"
 domain="gui/$(id -u)"
-agent="$HOME/Library/LaunchAgents/local.lansend.receiver.plist"
-engine="$PWD/engine"
-mkdir -p "$target" "$services" "$HOME/Library/LaunchAgents"
-"$engine" init
-if cmp -s "$engine" "$target/lansend" && [[ -d "$target/LANSend.app" && -d "$services/发送到 Windows.workflow" ]] && "$engine" ready; then exit 0; fi
-launchctl bootout "$domain/local.lansend.receiver" 2>/dev/null || true
-install -m 755 "$engine" "$target/lansend"
-ditto "Receipts.app" "$target/LANSend.app"
+mkdir -p "$target" "$services" "$agents"
+"$PWD/engine" init
+# Finder's existing Quick Action calls this copy for sending only.
+if ! cmp -s engine "$target/lansend"; then
+  temp=$(mktemp "$target/.engine.XXXXXXXX")
+  install -m 755 engine "$temp"
+  mv -f "$temp" "$target/lansend"
+fi
 ditto '发送到 Windows.workflow' "$services/发送到 Windows.workflow"
-plutil -create xml1 "$agent"
-plutil -insert Label -string local.lansend.receiver "$agent"
-plutil -insert ProgramArguments -array "$agent"
-plutil -insert ProgramArguments.0 -string "$target/lansend" "$agent"
-plutil -insert ProgramArguments.1 -string receive "$agent"
-plutil -insert RunAtLoad -bool YES "$agent"
-launchctl bootstrap "$domain" "$agent"
-"$engine" ready
-/usr/bin/open -g -a "$target/LANSend.app"
-/System/Library/CoreServices/pbs -flush 2>/dev/null || true
+# Login opens the application. Only the application launches the receiver.
+temp=$(mktemp "$agents/.lansend.XXXXXXXX")
+trap 'rm -f "$temp"' EXIT
+plutil -create xml1 "$temp"
+plutil -insert Label -string local.lansend.receiver "$temp"
+plutil -insert ProgramArguments -array "$temp"
+plutil -insert ProgramArguments.0 -string /usr/bin/open "$temp"
+plutil -insert ProgramArguments.1 -string -g "$temp"
+plutil -insert ProgramArguments.2 -string -a "$temp"
+plutil -insert ProgramArguments.3 -string "$app" "$temp"
+plutil -insert ProgramArguments.4 -string --args "$temp"
+plutil -insert ProgramArguments.5 -string --background-receiver "$temp"
+plutil -insert RunAtLoad -bool YES "$temp"
+if ! cmp -s "$temp" "$agent"; then
+  if [[ -f "$agent" ]]; then
+    launchctl bootout "$domain/local.lansend.receiver" 2>/dev/null || true
+  fi
+  mv -f "$temp" "$agent"
+fi
+# launchd loads the plist at the next login. This instance serves immediately.

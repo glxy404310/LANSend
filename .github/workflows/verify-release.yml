@@ -1,0 +1,53 @@
+name: Verify release archives
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Numeric ID of the candidate Release
+        required: true
+        type: string
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            archive: LANSend-Windows-x64.zip
+          - os: macos-latest
+            archive: LANSend-macOS-universal.zip
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    # GitHub requires push access to read a draft Release.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download and verify candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          set -eu
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]
+          release="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+          for name in "$ARCHIVE" SHA256SUMS.txt; do
+            asset=$(gh api "$release" --jq ".assets[] | select(.name==\"$name\") | .id")
+            gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$name"
+          done
+          python -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["ARCHIVE"]); assert hashlib.sha256(p.read_bytes()).hexdigest()+"  "+p.name in pathlib.Path("SHA256SUMS.txt").read_text().splitlines()'
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive LANSend-Windows-x64.zip candidate
+          ./scripts/check-windows.ps1 -Executable ./candidate/LANSend.exe
+      - if: runner.os == 'macOS'
+        run: |
+          mkdir candidate
+          ditto -x -k LANSend-macOS-universal.zip candidate
+          bash scripts/check-mac.sh candidate/LANSend.app

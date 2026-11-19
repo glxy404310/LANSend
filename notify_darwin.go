@@ -2,19 +2,12 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
+// The parent app reads only complete, tagged records from its child's pipe.
 func notifyReceived(path string) {
-	root, e := os.UserConfigDir()
-	if e != nil {
-		return
-	}
-	url := "lansend-receipt://file/" + base64.RawURLEncoding.EncodeToString([]byte(filepath.Base(path)))
-	cmd := exec.Command("/usr/bin/open", "-g", "-a", filepath.Join(root, "LANSend", "LANSend.app"), url)
-	if cmd.Start() == nil {
-		go cmd.Wait()
-	}
+	fmt.Fprintln(os.Stdout, "RECEIVED "+base64.StdEncoding.EncodeToString([]byte(filepath.Base(path))))
 }

@@ -102,7 +102,7 @@ func ready(root string) error {
 	}
 	return errors.New("本机接收服务未启动，请检查 TCP 53318 端口是否被占用")
 }
-func receive(root string) error {
+func serveFiles(root string, onSaved func(string)) error {
 	c, e := loadIdentity(root)
 	if e != nil {
 		return e
@@ -119,7 +119,7 @@ func receive(root string) error {
 	if e = os.MkdirAll(dest, 0700); e != nil {
 		return e
 	}
-	srv := http.Server{Addr: ":" + port, Handler: routes(root, dest, notifyReceived), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequestClientCert}, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	srv := http.Server{Addr: ":" + port, Handler: routes(root, dest, onSaved), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequestClientCert}, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
 	node := &embeddedNode{root: root, self: digest(cert.Certificate[0]), tlsConfig: srv.TLSConfig.Clone(), handler: srv.Handler}
 	mux := http.NewServeMux()
 	mux.Handle("/", srv.Handler)

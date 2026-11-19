@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -13,20 +12,6 @@ import (
 	"unicode/utf8"
 	"unsafe"
 )
-
-func notifyReceived(path string) {
-	exe, e := os.Executable()
-	if e != nil {
-		return
-	}
-	token := base64.RawURLEncoding.EncodeToString([]byte(filepath.Base(path)))
-	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(filepath.Dir(exe), "Notify.ps1"), token)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-	if cmd.Start() == nil {
-		go cmd.Wait()
-	}
-}
 
 func revealReceived(raw string) error {
 	const prefix = "lansend-reveal://file/"

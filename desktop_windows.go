@@ -22,9 +22,6 @@ import (
 //go:embed windows-ui/Setup.ps1
 var setupScript []byte
 
-//go:embed windows-ui/Notify.ps1
-var toastScript []byte
-
 func installDesktop(exe, target, root string) error {
 	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -43,10 +40,8 @@ func installDesktop(exe, target, root string) error {
 			return fmt.Errorf("请先关闭已打开的 LANSend 窗口，再重试：%w", err)
 		}
 	}
-	for name, contents := range map[string][]byte{"Setup.ps1": append([]byte{0xef, 0xbb, 0xbf}, setupScript...), "Notify.ps1": toastScript} {
-		if err = os.WriteFile(filepath.Join(dir, name), contents, 0600); err != nil {
-			return err
-		}
+	if err = os.WriteFile(filepath.Join(dir, "Setup.ps1"), append([]byte{0xef, 0xbb, 0xbf}, setupScript...), 0600); err != nil {
+		return err
 	}
 	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
 	cmd := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(dir, "Setup.ps1"))
@@ -221,6 +216,7 @@ func dashboard(root string, initial []string) error {
 			})
 		}()
 	}
+	var silent *walk.CheckBox
 	var tabs *walk.TabWidget
 	var picker *walk.ComboBox
 	var hint *walk.Label
@@ -313,8 +309,13 @@ func dashboard(root string, initial []string) error {
 				{Title: "文件传输", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
 					d.Label{Text: "发送到 Mac", Font: d.Font{Family: "Segoe UI", PointSize: 16, Bold: true}}, d.Label{Text: "可多选文件，或直接拖入此窗口发送。"},
 					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &sendButton, Text: "选择文件并发送…", OnClicked: choose}, d.PushButton{Text: "打开收件箱", OnClicked: inbox}, d.HSpacer{}}}, d.VSpacer{}, d.Label{AssignTo: &status, Text: "等待发送"}, d.ProgressBar{AssignTo: &bar, MaxValue: 100}}},
-				{Title: "设备配对", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}}, Children: []d.Widget{
-					d.Label{Text: "本机地址    " + strings.Join(ips, "  /  ")}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.VSpacer{}}},
+				{Title: "配对与设置", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}}, Children: []d.Widget{
+					d.Label{Text: "本机地址    " + strings.Join(ips, "  /  ")}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.CheckBox{AssignTo: &silent, Text: "静默接收（关闭时前台弹窗）", Checked: receiptsSilent(root), OnClicked: func() {
+						if err := setReceiptsSilent(root, silent.Checked()); err != nil {
+							silent.SetChecked(receiptsSilent(root))
+							walk.MsgBox(w, "收件设置", err.Error(), walk.MsgBoxIconWarning)
+						}
+					}}, d.VSpacer{}}},
 				{Title: "我的电脑", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
 					d.Label{AssignTo: &hint, Text: "正在查找同一账号的电脑…"}, d.ComboBox{AssignTo: &picker},
 					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{Text: "配对所选电脑", OnClicked: connect}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.VSpacer{}}}}},
