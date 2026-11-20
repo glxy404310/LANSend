@@ -2,7 +2,7 @@
 
 @interface Desktop:NSObject <NSApplicationDelegate,NSWindowDelegate>
 @property NSWindow *window;
-@property NSTextField *peer,*status,*info,*address,*code,*receiveDirField;
+@property NSTextField *peer,*status,*receiveDirField;
 @property NSButton *sendButton,*pairButton,*resetDirButton;
 @property NSProgressIndicator *progress;
 @property NSView *transfer,*settings,*devices;
@@ -31,8 +31,7 @@
 - (void)refreshPeer {
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend/peer.json"];
     NSData *data=[NSData dataWithContentsOfFile:path];NSDictionary *c=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
-    self.peer.stringValue=c[@"Address"]?[NSString stringWithFormat:@"已配对   ·   %@",c[@"Address"]]:@"尚未配对";
-    if([c[@"RemoteAddress"] length])self.peer.stringValue=[self.peer.stringValue stringByAppendingFormat:@"   /   %@",c[@"RemoteAddress"]];
+    self.peer.stringValue=[c[@"PeerHash"] length]?@"已配对":@"尚未配对";
 }
 - (void)run:(NSString*)program args:(NSArray*)args input:(NSString*)input done:(void(^)(BOOL,NSString*))done {
     self.busy=YES;self.sendButton.enabled=NO;self.pairButton.enabled=NO;
@@ -69,10 +68,32 @@
         }];
     }];
 }
-- (void)pair:(id)sender {
-    if(!self.address.stringValue.length || self.code.stringValue.length!=12){[self error:@"请输入对方的 IP 地址和 12 位校验码。"];return;}
-    [self run:self.engine args:@[@"pair",self.address.stringValue] input:self.code.stringValue done:^(BOOL ok,NSString *msg){
-        if(ok){self.code.stringValue=@"";[self refreshPeer];self.status.stringValue=@"已保存配对";}else [self error:msg];
+- (void)copyInvite:(id)sender { [self useInvite:YES]; }
+- (void)pasteInvite:(id)sender { [self useInvite:NO]; }
+- (void)useInvite:(BOOL)copy {
+    if(self.busy)return;
+    NSString *input=copy?nil:[NSPasteboard.generalPasteboard stringForType:NSPasteboardTypeString];
+    if(!copy && !input.length){[self error:@"请先复制对方的 LANSend 码。"];return;}
+    NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend/peer.json"];
+    NSData *data=[NSData dataWithContentsOfFile:path];
+    NSDictionary *peer=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+    NSString *expected=peer[@"PeerHash"]?:@"";
+    if(expected.length){
+        NSAlert *confirm=[NSAlert new];confirm.messageText=@"已有配对";
+        confirm.informativeText=@"本机已有配对。是否允许在本次配对成功后更换设备？";
+        [confirm addButtonWithTitle:@"取消"];[confirm addButtonWithTitle:@"允许更换"];
+        if([confirm runModal]!=NSAlertSecondButtonReturn)return;
+    }
+    [self run:self.engine args:@[copy?@"invite-new":@"invite-join",expected] input:input done:^(BOOL ok,NSString *msg){
+        if(!ok){[self error:msg];return;}
+        if(copy){
+            [NSPasteboard.generalPasteboard clearContents];
+            if(![NSPasteboard.generalPasteboard setString:msg forType:NSPasteboardTypeString]){[self error:@"复制配对码失败"];return;}
+        }
+        [self refreshPeer];
+        NSAlert *alert=[NSAlert new];alert.messageText=copy?@"已复制 LANSend 码":@"已双向配对";
+        alert.informativeText=copy?@"请在另一台电脑点击「从剪贴板配对」。配对码 5 分钟内有效。":@"两台电脑现在可以互传文件。";
+        [alert beginSheetModalForWindow:self.window completionHandler:nil];
     }];
 }
 - (void)remote:(id)sender {
@@ -249,11 +270,11 @@
         self.receipt.floatingPanel=YES; self.receipt.hidesOnDeactivate=NO;
         self.receipt.collectionBehavior=NSWindowCollectionBehaviorMoveToActiveSpace|NSWindowCollectionBehaviorFullScreenAuxiliary;
         NSView *v=self.receipt.contentView;
-        self.receiptTitle=[self label:@"" frame:NSMakeRect(20,106,380,30) size:20 bold:YES view:v];
-        self.files=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(18,62,384,34) pullsDown:NO];
+        self.receiptTitle=[self label:@"" frame:NSMakeRect(20,104,380,30) size:20 bold:YES view:v];
+        self.files=[[NSPopUpButton alloc] initWithFrame:NSMakeRect(20,60,380,32) pullsDown:NO];
         [v addSubview:self.files];
-        [self button:@"打开文件" at:NSMakeRect(16,14,116,34) action:@selector(openReceived:) view:v];
-        [self button:@"打开收件夹" at:NSMakeRect(136,14,124,34) action:@selector(openReceivedFolder:) view:v];
+        [self button:@"打开文件" at:NSMakeRect(20,14,116,34) action:@selector(openReceived:) view:v];
+        [self button:@"打开收件夹" at:NSMakeRect(144,14,124,34) action:@selector(openReceivedFolder:) view:v];
         [self.receipt center];
     }
     BOOL first=!self.receipt.visible;
@@ -326,34 +347,33 @@
     self.window=[[NSWindow alloc]initWithContentRect:NSMakeRect(0,0,580,458) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
     self.window.title=@"LANSend";self.window.delegate=self;self.window.releasedWhenClosed=NO;
     NSView *v=self.window.contentView;NSView *header=[[NSView alloc]initWithFrame:NSMakeRect(0,352,580,106)];header.wantsLayer=YES;header.layer.backgroundColor=[NSColor colorWithSRGBRed:.075 green:.208 blue:.239 alpha:1].CGColor;[v addSubview:header];
-    [self label:@"LANSend" frame:NSMakeRect(28,49,510,39) size:30 bold:YES view:header].textColor=NSColor.whiteColor;
-    self.peer=[self label:@"" frame:NSMakeRect(30,21,520,24) size:14 bold:NO view:header];self.peer.textColor=NSColor.whiteColor;[self refreshPeer];
-    NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(26,306,320,30);tabs.selectedSegment=0;[v addSubview:tabs];
-    self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,530,280)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
-    [self label:@"发送到已配对设备" frame:NSMakeRect(4,223,470,32) size:22 bold:YES view:self.transfer];
-    self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,163,170,38) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
-    [self button:@"打开收件箱" at:NSMakeRect(180,163,124,38) action:@selector(inbox:) view:self.transfer];
-    self.status=[self label:@"正在启动接收服务…" frame:NSMakeRect(4,32,520,25) size:14 bold:NO view:self.transfer];
-    self.progress=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(5,17,515,8)];self.progress.indeterminate=YES;self.progress.displayedWhenStopped=NO;[self.transfer addSubview:self.progress];
-    self.info=[self label:@"" frame:NSMakeRect(4,218,520,56) size:14 bold:NO view:self.settings];self.info.maximumNumberOfLines=3;self.info.selectable=YES;
-    self.address=[NSTextField new];self.address.frame=NSMakeRect(4,180,355,27);self.address.placeholderString=@"对方的局域网 IP 或 Tailscale 地址";[self.settings addSubview:self.address];
-    self.code=[NSTextField new];self.code.frame=NSMakeRect(4,144,355,27);self.code.placeholderString=@"对方的 12 位校验码";[self.settings addSubview:self.code];
-    [self button:@"远程连接…" at:NSMakeRect(168,96,126,36) action:@selector(remote:) view:self.settings];
-    self.pairButton=[self button:@"验证并保存配对" at:NSMakeRect(0,96,164,36) action:@selector(pair:) view:self.settings];
+    [self label:@"LANSend" frame:NSMakeRect(24,48,532,39) size:30 bold:YES view:header].textColor=NSColor.whiteColor;
+    self.peer=[self label:@"" frame:NSMakeRect(24,20,532,22) size:14 bold:NO view:header];self.peer.textColor=NSColor.whiteColor;[self refreshPeer];
+    NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(24,306,324,30);tabs.selectedSegment=0;[v addSubview:tabs];
+    self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,532,280)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
+    [self label:@"发送到已配对设备" frame:NSMakeRect(0,226,532,32) size:22 bold:YES view:self.transfer];
+    self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,168,168,36) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
+    [self button:@"打开收件箱" at:NSMakeRect(178,168,120,36) action:@selector(inbox:) view:self.transfer];
+    self.status=[self label:@"正在启动接收服务…" frame:NSMakeRect(0,34,532,22) size:14 bold:NO view:self.transfer];
+    self.progress=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(0,16,532,8)];self.progress.indeterminate=YES;self.progress.displayedWhenStopped=NO;[self.transfer addSubview:self.progress];
+    [self label:@"局域网配对" frame:NSMakeRect(0,242,532,32) size:20 bold:YES view:self.settings];
+    [self label:@"在一台电脑复制 LANSend 码，在另一台电脑粘贴即可双向配对。" frame:NSMakeRect(0,210,532,24) size:14 bold:NO view:self.settings];
+    [self button:@"复制 LANSend 码" at:NSMakeRect(0,158,148,36) action:@selector(copyInvite:) view:self.settings];
+    self.pairButton=[self button:@"从剪贴板配对" at:NSMakeRect(158,158,140,36) action:@selector(pasteInvite:) view:self.settings];
     NSSegmentedControl *mode=[NSSegmentedControl segmentedControlWithLabels:@[@"前台弹窗",@"静默接收"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeMode:)];
-    mode.frame=NSMakeRect(313,98,205,32);mode.selectedSegment=self.silentReceipts?1:0;
+    mode.frame=NSMakeRect(324,98,208,32);mode.selectedSegment=self.silentReceipts?1:0;
     [self.settings addSubview:mode];
-    NSBox *sep=[[NSBox alloc]initWithFrame:NSMakeRect(4,78,520,1)];sep.boxType=NSBoxSeparator;[self.settings addSubview:sep];
-    [self label:@"收件目录" frame:NSMakeRect(4,48,120,20) size:13 bold:NO view:self.settings];
-    self.receiveDirField=[NSTextField new];self.receiveDirField.frame=NSMakeRect(4,16,344,24);self.receiveDirField.editable=NO;self.receiveDirField.selectable=YES;self.receiveDirField.bezeled=YES;self.receiveDirField.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.settings addSubview:self.receiveDirField];
-    [self button:@"更改…" at:NSMakeRect(356,12,76,32) action:@selector(chooseReceiveDir:) view:self.settings];
-    self.resetDirButton=[self button:@"恢复默认" at:NSMakeRect(436,12,88,32) action:@selector(resetReceiveDir:) view:self.settings];
+    NSBox *sep=[[NSBox alloc]initWithFrame:NSMakeRect(0,78,532,1)];sep.boxType=NSBoxSeparator;[self.settings addSubview:sep];
+    [self label:@"收件目录" frame:NSMakeRect(0,48,120,20) size:13 bold:NO view:self.settings];
+    self.receiveDirField=[NSTextField new];self.receiveDirField.frame=NSMakeRect(0,16,348,24);self.receiveDirField.editable=NO;self.receiveDirField.selectable=YES;self.receiveDirField.bezeled=YES;self.receiveDirField.lineBreakMode=NSLineBreakByTruncatingMiddle;[self.settings addSubview:self.receiveDirField];
+    [self button:@"更改…" at:NSMakeRect(356,12,80,32) action:@selector(chooseReceiveDir:) view:self.settings];
+    self.resetDirButton=[self button:@"恢复默认" at:NSMakeRect(444,12,88,32) action:@selector(resetReceiveDir:) view:self.settings];
     [self refreshReceiveDir];
     self.devices=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.devices];self.devices.hidden=YES;
- self.deviceHint=[self label:@"正在查找同一账号的电脑…" frame:NSMakeRect(4,222,518,28) size:14 bold:NO view:self.devices];
- self.picker=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(4,168,390,34) pullsDown:NO];[self.devices addSubview:self.picker];
- [self button:@"配对所选电脑" at:NSMakeRect(0,108,165,38) action:@selector(connectDevice:) view:self.devices];
- [self button:@"远程连接…" at:NSMakeRect(168,108,125,38) action:@selector(remote:) view:self.devices];
+ self.deviceHint=[self label:@"正在查找同一账号的电脑…" frame:NSMakeRect(0,224,532,26) size:14 bold:NO view:self.devices];
+ self.picker=[[NSPopUpButton alloc]initWithFrame:NSMakeRect(0,172,532,34) pullsDown:NO];[self.devices addSubview:self.picker];
+ [self button:@"配对所选电脑" at:NSMakeRect(0,116,152,36) action:@selector(connectDevice:) view:self.devices];
+ [self button:@"远程连接…" at:NSMakeRect(162,116,118,36) action:@selector(remote:) view:self.devices];
  self.scanTimer=[NSTimer scheduledTimerWithTimeInterval:5 repeats:YES block:^(NSTimer *timer){[self refreshPeer];[self scan];}];
  [self.window center];
     if ([NSProcessInfo.processInfo.arguments containsObject:@"--background-receiver"]) {
@@ -363,7 +383,7 @@
     }
     NSString *res=NSBundle.mainBundle.resourcePath;self.engine=[res stringByAppendingPathComponent:@"engine"];
     [self run:@"/bin/bash" args:@[[res stringByAppendingPathComponent:@"Setup.sh"]] input:nil done:^(BOOL ok,NSString *msg){
-        if(ok){self.info.stringValue=msg;[self startReceiver];}else{self.status.stringValue=@"接收服务启动失败";if(self.window.visible)[self error:msg];}
+        if(ok){[self startReceiver];}else{self.status.stringValue=@"接收服务启动失败";if(self.window.visible)[self error:msg];}
     }];
 }
 @end

@@ -100,9 +100,8 @@ func desktopEntry(args []string) bool {
 }
 func dashboard(root string, initial []string) error {
 	var w *walk.MainWindow
-	var status, peerText, localAddr *walk.Label
+	var status, peerText *walk.Label
 	var bar *walk.ProgressBar
-	var addr, code *walk.LineEdit
 	var sendButton, pairButton *walk.PushButton
 	var busy bool
 	showPeer := func() {
@@ -110,11 +109,8 @@ func dashboard(root string, initial []string) error {
 		b, _ := os.ReadFile(filepath.Join(root, "peer.json"))
 		json.Unmarshal(b, &c)
 		label := "尚未配对 · 请在「配对与设置」中连接设备"
-		if c.Address != "" {
-			label = "已配对   ·   " + c.Address
-		}
-		if c.RemoteAddress != "" {
-			label += "   /   " + c.RemoteAddress
+		if c.PeerHash != "" {
+			label = "已配对"
 		}
 		peerText.SetText(label)
 	}
@@ -156,55 +152,54 @@ func dashboard(root string, initial []string) error {
 			sendFiles(dlg.FilePaths)
 		}
 	}
-	mine := ""
-	if c, e := loadIdentity(root); e == nil {
-		_, hash, e := client(c, false)
-		if e == nil {
-			mine = hash[:12]
-		}
-	}
-	formatLocalIP := func() string {
-		if ip := primaryLocalIPv4(); ip != "" {
-			return ip
-		}
-		return "未检测到局域网地址"
-	}
-	showLocalIP := func() {
-		if localAddr == nil {
-			return
-		}
-		text := formatLocalIP()
-		if localAddr.Text() != text {
-			localAddr.SetText(text)
-		}
-	}
-	pairNow := func() {
+	useInvite := func(copyCode bool) {
 		if busy {
 			return
 		}
-		address, key := strings.TrimSpace(addr.Text()), strings.TrimSpace(code.Text())
-		if address == "" || len(key) != 12 {
-			walk.MsgBox(w, "配对", "请填写对方地址和 12 位校验码。", walk.MsgBoxIconInformation)
+		pasted := ""
+		var err error
+		if !copyCode {
+			pasted, err = walk.Clipboard().Text()
+			if err == nil {
+				_, _, _, err = parseInvite(pasted)
+			}
+			if err != nil {
+				walk.MsgBox(w, "LANSend 码", err.Error(), walk.MsgBoxIconWarning)
+				return
+			}
+		}
+		old, err := readPeer(filepath.Join(root, "peer.json"))
+		if err != nil {
+			walk.MsgBox(w, "配对未完成", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
+		if old.PeerHash != "" && walk.MsgBox(w, "已有配对", "本机已有配对。是否允许在本次配对成功后更换设备？", walk.MsgBoxYesNo|walk.MsgBoxIconQuestion) != walk.DlgCmdYes {
 			return
 		}
 		busy = true
-		pairButton.SetEnabled(false)
-		sendButton.SetEnabled(false)
-		status.SetText("正在验证对方设备…")
 		go func() {
-			e := pair(filepath.Join(root, "peer.json"), address, func() string { return key })
+			var invite string
+			var err error
+			if copyCode {
+				invite, err = makeInvite(root, old.PeerHash)
+			} else {
+				err = joinInvite(root, pasted, old.PeerHash)
+			}
 			w.Synchronize(func() {
 				busy = false
-				pairButton.SetEnabled(true)
-				sendButton.SetEnabled(true)
-				if e != nil {
-					status.SetText("配对未完成")
-					walk.MsgBox(w, "配对未完成", e.Error(), walk.MsgBoxIconWarning)
-				} else {
-					showPeer()
-					code.SetText("")
-					status.SetText("已保存配对")
+				if copyCode && err == nil {
+					err = walk.Clipboard().SetText(invite)
 				}
+				if err != nil {
+					walk.MsgBox(w, "配对未完成", err.Error(), walk.MsgBoxIconWarning)
+					return
+				}
+				showPeer()
+				msg := "已双向配对，两台电脑可以互传文件。"
+				if copyCode {
+					msg = "已复制 LANSend 码，请在另一台电脑点击「从剪贴板配对」。配对码 5 分钟内有效。"
+				}
+				walk.MsgBox(w, "LANSend 码", msg, walk.MsgBoxIconInformation)
 			})
 		}()
 	}
@@ -378,7 +373,6 @@ func dashboard(root string, initial []string) error {
 			nav[i].Invalidate()
 		}
 		if index == 1 {
-			showLocalIP()
 			showSaveDir()
 		}
 		refresh()
@@ -455,43 +449,13 @@ func dashboard(root string, initial []string) error {
 
 								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
 								Children: []d.Widget{
-									d.Label{MaxSize: d.Size{Height: 22}, Text: "本机信息", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
-									d.Composite{
-										Layout: d.Grid{Columns: 3, MarginsZero: true, Spacing: 8},
-										Children: []d.Widget{
-											d.Label{MaxSize: d.Size{Height: 22}, Text: "本机地址", MinSize: d.Size{Width: fieldLabelWidth}},
-											d.Label{MaxSize: d.Size{Height: 22}, Font: d.Font{Family: "Cambria Math", PointSize: 10}, AssignTo: &localAddr, Text: formatLocalIP()},
-											d.HSpacer{},
-											d.Label{MaxSize: d.Size{Height: 22}, Text: "本机校验码", MinSize: d.Size{Width: fieldLabelWidth}},
-											d.Label{MaxSize: d.Size{Height: 22}, Font: d.Font{Family: "Cambria Math", PointSize: 10}, Text: mine},
-											d.HSpacer{},
-										},
-									},
-									d.HSpacer{},
-								},
-							},
-							d.Composite{
-
-								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
-								Children: []d.Widget{
-									d.Label{MaxSize: d.Size{Height: 22}, Text: "手动配对", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
-									d.Composite{
-										Layout: d.Grid{Columns: 2, MarginsZero: true, Spacing: 8},
-										Children: []d.Widget{
-											d.Label{MaxSize: d.Size{Height: 22}, Text: "对方地址", MinSize: d.Size{Width: fieldLabelWidth}},
-											d.LineEdit{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &addr, StretchFactor: 1, CueBanner: "对方的局域网 IP 或 Tailscale 地址"},
-											d.Label{MaxSize: d.Size{Height: 22}, Text: "对方校验码", MinSize: d.Size{Width: fieldLabelWidth}},
-											d.LineEdit{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &code, StretchFactor: 1, CueBanner: "对方的 12 位校验码", MaxLength: 12},
-										},
-									},
-									d.Composite{
-										Layout: d.HBox{MarginsZero: true, Spacing: 10},
-										Children: []d.Widget{
-											d.PushButton{MaxSize: d.Size{Height: 32}, AssignTo: &pairButton, Text: "验证并保存配对", MinSize: d.Size{Width: 136, Height: 32}, OnClicked: pairNow},
-											d.PushButton{MaxSize: d.Size{Height: 32}, Text: "远程连接…", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: remote},
-											d.HSpacer{},
-										},
-									},
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "局域网配对", Font: d.Font{Family: chineseUIFont, PointSize: 14, Bold: true}, TextColor: dark},
+									d.Label{Text: "在一台电脑复制 LANSend 码，在另一台电脑粘贴即可双向配对。"},
+									d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
+										d.PushButton{Text: "复制 LANSend 码", MinSize: d.Size{Width: 132, Height: 32}, MaxSize: d.Size{Height: 32}, OnClicked: func() { useInvite(true) }},
+										d.PushButton{AssignTo: &pairButton, Text: "从剪贴板配对", MinSize: d.Size{Width: 132, Height: 32}, MaxSize: d.Size{Height: 32}, OnClicked: func() { useInvite(false) }},
+										d.HSpacer{},
+									}},
 								},
 							},
 							d.Composite{
@@ -599,7 +563,6 @@ func dashboard(root string, initial []string) error {
 					showPeer()
 					refresh()
 					if currentPage == 1 {
-						showLocalIP()
 					}
 				})
 			case <-stop:

@@ -32,7 +32,7 @@ type peerAliasEntry struct {
 	expires time.Time
 }
 
-var errPeerOccupied = errors.New("已有另一台已配对电脑。如需更换，请使用手动配对")
+var errPeerOccupied = errors.New("已有另一台已配对电脑。如需更换，请在「配对与设置」使用 LANSend 码")
 
 func readPeer(path string) (config, error) {
 	var c config

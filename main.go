@@ -112,6 +112,9 @@ func pair(path, addr string, code func() string) error {
 	return savePair(path, c, true)
 }
 func savePair(path string, c config, replace bool) error {
+	return savePairExpected(path, c, replace, nil)
+}
+func savePairExpected(path string, c config, replace bool, expected *string) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
 	}
@@ -127,7 +130,10 @@ func savePair(path string, c config, replace bool) error {
 	if e != nil {
 		return e
 	}
-	if !replace && old.PeerHash != "" && old.PeerHash != c.PeerHash {
+	if expected != nil && old.PeerHash != *expected && old.PeerHash != c.PeerHash {
+		return errPeerOccupied
+	}
+	if expected == nil && !replace && old.PeerHash != "" && old.PeerHash != c.PeerHash {
 		return errPeerOccupied
 	}
 	keepPeerRoutes(&c, old)
@@ -267,6 +273,20 @@ func run(args []string) error {
 		case "ready":
 			return ready(root)
 		}
+	}
+	if len(args) == 2 && args[0] == "invite-new" {
+		code, err := makeInvite(root, args[1])
+		if err == nil {
+			fmt.Println(code)
+		}
+		return err
+	}
+	if len(args) == 2 && args[0] == "invite-join" {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, 1024))
+		if err != nil {
+			return err
+		}
+		return joinInvite(root, string(data), args[1])
 	}
 	if len(args) == 2 && args[0] == "connect-device" {
 		_, e := nodeRequest(root, "connect?id="+url.QueryEscape(args[1]))

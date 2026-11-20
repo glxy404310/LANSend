@@ -112,6 +112,7 @@ func serveFiles(root string, onSaved func(string)) error {
 	node := &embeddedNode{root: root, self: digest(cert.Certificate[0]), tlsConfig: srv.TLSConfig.Clone(), handler: srv.Handler}
 	mux := http.NewServeMux()
 	mux.Handle("/", srv.Handler)
+	new(lanInvite).register(mux, root, node.self)
 	mux.HandleFunc("POST "+nodeAPI, node.control)
 	srv.Handler = mux
 	if _, err := os.Stat(filepath.Join(root, "remote-enabled")); err == nil {
