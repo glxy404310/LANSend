@@ -30,6 +30,13 @@ LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Wind
 
 ## 更新日志（Release Notes）
 
+### 开发版（尚未发布）
+
+- Windows 主窗口采用纯色背景，导航按钮和传输进度条使用抗锯齿圆角。Windows 11 上的主窗口使用系统圆角。
+- 中文界面采用微软雅黑 UI，应用名称、局域网地址和校验码使用 Cambria Math。
+
+![Windows 开发版的文件传输页](docs/windows-transfer.png)
+
 ### v1.6.2
 
 - Windows 与 macOS「配对与设置」页新增自定义收件目录设置：支持通过系统文件夹选择器更改保存位置并校验写入权限，也可随时一键恢复默认目录（`Downloads/LANSend`），修改后对后续来件即时生效，无需重启后台接收服务。

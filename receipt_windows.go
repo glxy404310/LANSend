@@ -45,30 +45,44 @@ func receive(root string) error {
 			walk.MsgBox(w, "打开失败", "请确认文件仍在收件夹中，并已设置默认打开程序。", walk.MsgBoxIconWarning)
 		}
 	}
-	ui := d.MainWindow{AssignTo: &w, Title: "LANSend 收件", Visible: false, Size: d.Size{Width: 420, Height: 180}, Layout: d.VBox{}, Children: []d.Widget{
-		d.Label{AssignTo: &title, Font: d.Font{Family: "Segoe UI", PointSize: 15, Bold: true}},
-		d.ComboBox{AssignTo: &files},
-		d.Composite{Layout: d.HBox{}, Children: []d.Widget{
-			d.PushButton{Text: "打开文件", OnClicked: func() {
-				i := files.CurrentIndex()
-				if i >= 0 && i < len(paths) {
-					open(paths[i])
-				}
-			}},
-			d.PushButton{Text: "打开收件夹", OnClicked: func() {
-				if i := files.CurrentIndex(); i >= 0 && i < len(paths) {
-					open(filepath.Dir(paths[i]))
-					return
-				}
-				dir, err := receiveDir(root)
-				if err != nil {
-					walk.MsgBox(w, "打开收件夹", err.Error(), walk.MsgBoxIconWarning)
-					return
-				}
-				open(dir)
-			}},
-		}},
-	}}
+	ui := d.MainWindow{
+		AssignTo: &w,
+		Title:    "LANSend 收件",
+		Visible:  false,
+		Size:     d.Size{Width: 420, Height: 185},
+		MinSize:  d.Size{Width: 380, Height: 170},
+		Font:     d.Font{Family: chineseUIFont, PointSize: 10},
+		Layout:   d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 10},
+		Children: []d.Widget{
+			d.Label{MaxSize: d.Size{Height: 30}, AssignTo: &title, Font: d.Font{Family: chineseUIFont, PointSize: 15, Bold: true}},
+			d.ComboBox{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &files},
+			d.VSpacer{},
+			d.Composite{
+				Layout: d.HBox{MarginsZero: true, Spacing: 10},
+				Children: []d.Widget{
+					d.PushButton{MaxSize: d.Size{Height: 32}, Text: "打开文件", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: func() {
+						i := files.CurrentIndex()
+						if i >= 0 && i < len(paths) {
+							open(paths[i])
+						}
+					}},
+					d.PushButton{MaxSize: d.Size{Height: 32}, Text: "打开收件夹", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: func() {
+						if i := files.CurrentIndex(); i >= 0 && i < len(paths) {
+							open(filepath.Dir(paths[i]))
+							return
+						}
+						dir, err := receiveDir(root)
+						if err != nil {
+							walk.MsgBox(w, "打开收件夹", err.Error(), walk.MsgBoxIconWarning)
+							return
+						}
+						open(dir)
+					}},
+					d.HSpacer{},
+				},
+			},
+		},
+	}
 	if err := ui.Create(); err != nil {
 		return err
 	}

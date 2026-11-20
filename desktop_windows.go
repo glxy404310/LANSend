@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/lxn/walk"
 	d "github.com/lxn/walk/declarative"
+
 	"net/url"
 	"os"
 	"os/exec"
@@ -16,7 +17,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
+
+const chineseUIFont = "Microsoft YaHei UI"
 
 //go:embed windows-ui/Setup.ps1
 var setupScript []byte
@@ -103,7 +109,7 @@ func dashboard(root string, initial []string) error {
 		var c config
 		b, _ := os.ReadFile(filepath.Join(root, "peer.json"))
 		json.Unmarshal(b, &c)
-		label := "尚未配对"
+		label := "尚未配对 · 请在「配对与设置」中连接设备"
 		if c.Address != "" {
 			label = "已配对   ·   " + c.Address
 		}
@@ -159,9 +165,9 @@ func dashboard(root string, initial []string) error {
 	}
 	formatLocalIP := func() string {
 		if ip := primaryLocalIPv4(); ip != "" {
-			return "本机地址    " + ip
+			return ip
 		}
-		return "本机地址    未检测到局域网地址"
+		return "未检测到局域网地址"
 	}
 	showLocalIP := func() {
 		if localAddr == nil {
@@ -223,7 +229,9 @@ func dashboard(root string, initial []string) error {
 		}()
 	}
 	var silent *walk.CheckBox
-	var tabs *walk.TabWidget
+	var pages [3]*walk.Composite
+	var nav [3]*walk.PushButton
+	currentPage := 0
 	var picker *walk.ComboBox
 	var hint *walk.Label
 	var saveDirEdit *walk.LineEdit
@@ -278,7 +286,7 @@ func dashboard(root string, initial []string) error {
 		showSaveDir()
 	}
 	refresh := func() {
-		if busy || scanning || tabs == nil || picker == nil || hint == nil || tabs.CurrentIndex() != 2 {
+		if busy || scanning || picker == nil || hint == nil || currentPage != 2 {
 			return
 		}
 		scanning = true
@@ -362,40 +370,208 @@ func dashboard(root string, initial []string) error {
 	}
 	dark := walk.RGB(19, 53, 61)
 	white := walk.RGB(255, 255, 255)
-	mw := d.MainWindow{AssignTo: &w, Title: "LANSend", Size: d.Size{Width: 580, Height: 525}, MinSize: d.Size{Width: 500, Height: 490}, Font: d.Font{Family: "Segoe UI", PointSize: 10}, Layout: d.VBox{MarginsZero: true, SpacingZero: true}, OnDropFiles: sendFiles, Children: []d.Widget{
-		d.Composite{Background: d.SolidColorBrush{Color: dark}, Layout: d.VBox{Margins: d.Margins{Left: 24, Top: 16, Right: 24, Bottom: 16}}, Children: []d.Widget{
-			d.Label{Text: "LANSend", Font: d.Font{Family: "Segoe UI", PointSize: 23, Bold: true}, TextColor: white}, d.Label{AssignTo: &peerText, TextColor: white}}},
-		d.Composite{Layout: d.VBox{Margins: d.Margins{Left: 20, Top: 14, Right: 20, Bottom: 14}, Spacing: 10}, Children: []d.Widget{
-			d.TabWidget{AssignTo: &tabs, OnCurrentIndexChanged: func() {
-				refresh()
-				if tabs != nil && tabs.CurrentIndex() == 1 {
-					showLocalIP()
-					showSaveDir()
-				}
-			}, Pages: []d.TabPage{
-				{Title: "文件传输", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
-					d.Label{Text: "发送到已配对设备", Font: d.Font{Family: "Segoe UI", PointSize: 16, Bold: true}}, d.Label{Text: "可多选文件，或直接拖入此窗口发送。"},
-					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &sendButton, Text: "选择文件并发送…", OnClicked: choose}, d.PushButton{Text: "打开收件箱", OnClicked: inbox}, d.HSpacer{}}}, d.VSpacer{}, d.Label{AssignTo: &status, Text: "等待发送"}, d.ProgressBar{AssignTo: &bar, MaxValue: 100}}},
-				{Title: "配对与设置", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}}, Children: []d.Widget{
-					d.Label{AssignTo: &localAddr, Text: formatLocalIP()}, d.Label{Text: "本机校验码    " + mine}, d.HSeparator{}, d.LineEdit{AssignTo: &addr, CueBanner: "对方的局域网 IP 或 Tailscale 地址"}, d.LineEdit{AssignTo: &code, CueBanner: "对方的 12 位校验码", MaxLength: 12}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{AssignTo: &pairButton, Text: "验证并保存配对", OnClicked: pairNow}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.CheckBox{AssignTo: &silent, Text: "静默接收（关闭时前台弹窗）", Checked: receiptsSilent(root), OnClicked: func() {
-						if err := setReceiptsSilent(root, silent.Checked()); err != nil {
-							silent.SetChecked(receiptsSilent(root))
-							walk.MsgBox(w, "收件设置", err.Error(), walk.MsgBoxIconWarning)
-						}
-					}}, d.HSeparator{}, d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{
-						d.Label{Text: "收件目录"},
-						d.LineEdit{AssignTo: &saveDirEdit, ReadOnly: true, Text: currentSaveDir()},
-						d.PushButton{Text: "更改…", OnClicked: chooseSaveDir},
-						d.PushButton{AssignTo: &resetDirButton, Text: "恢复默认", Enabled: isCustomReceiveDir(root), OnClicked: resetSaveDir},
-					}}, d.VSpacer{}}},
-				{Title: "我的电脑", Layout: d.VBox{Margins: d.Margins{Left: 16, Top: 16, Right: 16, Bottom: 14}, Spacing: 12}, Children: []d.Widget{
-					d.Label{AssignTo: &hint, Text: "正在查找同一账号的电脑…"}, d.ComboBox{AssignTo: &picker},
-					d.Composite{Layout: d.HBox{MarginsZero: true}, Children: []d.Widget{d.PushButton{Text: "配对所选电脑", OnClicked: connect}, d.PushButton{Text: "远程连接…", OnClicked: remote}}}, d.VSpacer{}}}}},
-		}}}}
+	const fieldLabelWidth = 88
+	switchPage := func(index int) {
+		currentPage = index
+		for i, page := range pages {
+			page.SetVisible(i == index)
+			nav[i].Invalidate()
+		}
+		if index == 1 {
+			showLocalIP()
+			showSaveDir()
+		}
+		refresh()
+	}
+	var links []d.Widget
+	for i, title := range []string{"文件传输", "配对与设置", "我的电脑"} {
+		links = append(links, d.PushButton{MaxSize: d.Size{Height: 32}, AssignTo: &nav[i], Text: title, MinSize: d.Size{Width: 98, Height: 32}, OnClicked: func() { switchPage(i) }})
+	}
+	links = append(links, d.HSpacer{})
+	mw := d.MainWindow{
+		AssignTo:    &w,
+		Title:       "LANSend",
+		Size:        d.Size{Width: 600, Height: 560},
+		MinSize:     d.Size{Width: 520, Height: 520},
+		Font:        d.Font{Family: chineseUIFont, PointSize: 10},
+		Layout:      d.VBox{MarginsZero: true, SpacingZero: true},
+		OnDropFiles: sendFiles,
+		Children: []d.Widget{
+			d.Composite{
+				Background: d.SolidColorBrush{Color: dark},
+				Layout:     d.HBox{Margins: d.Margins{Left: 24, Top: 16, Right: 24, Bottom: 16}, SpacingZero: true},
+				Children: []d.Widget{
+					d.Label{MaxSize: d.Size{Height: 38}, Text: "LANSend", Font: d.Font{Family: "Cambria Math", PointSize: 19, Bold: true}, TextColor: white},
+					d.HSpacer{},
+					d.Label{MaxSize: d.Size{Height: 22}, AssignTo: &peerText, TextColor: walk.RGB(202, 231, 225)},
+				},
+			},
+			d.Composite{
+				Background: d.SolidColorBrush{Color: surfaceColor},
+				Layout:     d.VBox{Margins: d.Margins{Left: 22, Top: 14, Right: 18, Bottom: 16}, Spacing: 10},
+				Children: []d.Widget{
+					d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 6}, Children: links},
+					d.Composite{AssignTo: &pages[0],
+						Layout: d.VBox{Margins: d.Margins{Top: 16, Bottom: 16}, Spacing: 12},
+						Children: []d.Widget{
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 20, Bottom: 20}, Spacing: 10},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 36}, Text: "发送文件", Font: d.Font{Family: chineseUIFont, PointSize: 18, Bold: true}, TextColor: dark},
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "将文件拖入窗口，或选择多个文件一起发送。", TextColor: walk.RGB(58, 86, 86)},
+									d.Composite{
+										Layout: d.HBox{MarginsZero: true, Spacing: 10},
+										Children: []d.Widget{
+											d.PushButton{MaxSize: d.Size{Height: 34}, AssignTo: &sendButton, Text: "选择文件并发送…", MinSize: d.Size{Width: 148, Height: 34}, OnClicked: choose},
+											d.HSpacer{},
+										},
+									},
+								},
+							},
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "传输状态", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Label{MaxSize: d.Size{Height: 22}, AssignTo: &status, Text: "等待发送"},
+									d.ProgressBar{AssignTo: &bar, MaxValue: 100, MaxSize: d.Size{Height: 10}, MinSize: d.Size{Height: 10}},
+								},
+							},
+							d.Composite{
+								Layout: d.HBox{MarginsZero: true},
+								Children: []d.Widget{
+									d.HSpacer{},
+									d.PushButton{MaxSize: d.Size{Height: 30}, Text: "打开收件箱", MinSize: d.Size{Width: 112, Height: 30}, OnClicked: inbox},
+								},
+							},
+							d.VSpacer{},
+						},
+					},
+					d.Composite{AssignTo: &pages[1], Visible: false,
+						Layout: d.VBox{Margins: d.Margins{Top: 14, Bottom: 16}, Spacing: 12},
+						Children: []d.Widget{
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "本机信息", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Composite{
+										Layout: d.Grid{Columns: 3, MarginsZero: true, Spacing: 8},
+										Children: []d.Widget{
+											d.Label{MaxSize: d.Size{Height: 22}, Text: "本机地址", MinSize: d.Size{Width: fieldLabelWidth}},
+											d.Label{MaxSize: d.Size{Height: 22}, Font: d.Font{Family: "Cambria Math", PointSize: 10}, AssignTo: &localAddr, Text: formatLocalIP()},
+											d.HSpacer{},
+											d.Label{MaxSize: d.Size{Height: 22}, Text: "本机校验码", MinSize: d.Size{Width: fieldLabelWidth}},
+											d.Label{MaxSize: d.Size{Height: 22}, Font: d.Font{Family: "Cambria Math", PointSize: 10}, Text: mine},
+											d.HSpacer{},
+										},
+									},
+									d.HSpacer{},
+								},
+							},
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "手动配对", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Composite{
+										Layout: d.Grid{Columns: 2, MarginsZero: true, Spacing: 8},
+										Children: []d.Widget{
+											d.Label{MaxSize: d.Size{Height: 22}, Text: "对方地址", MinSize: d.Size{Width: fieldLabelWidth}},
+											d.LineEdit{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &addr, StretchFactor: 1, CueBanner: "对方的局域网 IP 或 Tailscale 地址"},
+											d.Label{MaxSize: d.Size{Height: 22}, Text: "对方校验码", MinSize: d.Size{Width: fieldLabelWidth}},
+											d.LineEdit{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &code, StretchFactor: 1, CueBanner: "对方的 12 位校验码", MaxLength: 12},
+										},
+									},
+									d.Composite{
+										Layout: d.HBox{MarginsZero: true, Spacing: 10},
+										Children: []d.Widget{
+											d.PushButton{MaxSize: d.Size{Height: 32}, AssignTo: &pairButton, Text: "验证并保存配对", MinSize: d.Size{Width: 136, Height: 32}, OnClicked: pairNow},
+											d.PushButton{MaxSize: d.Size{Height: 32}, Text: "远程连接…", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: remote},
+											d.HSpacer{},
+										},
+									},
+								},
+							},
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "接收设置", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Composite{
+										Layout: d.HBox{MarginsZero: true, SpacingZero: true},
+										Children: []d.Widget{
+											d.CheckBox{MaxSize: d.Size{Height: 32},
+												AssignTo: &silent,
+												Text:     "静默接收（关闭时前台弹窗）",
+												Checked:  receiptsSilent(root),
+												OnClicked: func() {
+													if err := setReceiptsSilent(root, silent.Checked()); err != nil {
+														silent.SetChecked(receiptsSilent(root))
+														walk.MsgBox(w, "收件设置", err.Error(), walk.MsgBoxIconWarning)
+													}
+												},
+											},
+											d.HSpacer{},
+										},
+									},
+									d.Composite{
+										Layout: d.HBox{MarginsZero: true, Spacing: 8},
+										Children: []d.Widget{
+											d.Label{MaxSize: d.Size{Height: 22}, Text: "收件目录", MinSize: d.Size{Width: fieldLabelWidth}},
+											d.LineEdit{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &saveDirEdit, ReadOnly: true, StretchFactor: 1, Text: currentSaveDir()},
+											d.PushButton{MaxSize: d.Size{Height: 30}, Text: "更改…", MinSize: d.Size{Width: 76, Height: 30}, OnClicked: chooseSaveDir},
+											d.PushButton{MaxSize: d.Size{Height: 30}, AssignTo: &resetDirButton, Text: "恢复默认", MinSize: d.Size{Width: 88, Height: 30}, Enabled: isCustomReceiveDir(root), OnClicked: resetSaveDir},
+										},
+									},
+								},
+							},
+							d.VSpacer{},
+						},
+					},
+					d.Composite{AssignTo: &pages[2], Visible: false,
+						Layout: d.VBox{Margins: d.Margins{Top: 16, Bottom: 16}, Spacing: 12},
+						Children: []d.Widget{
+							d.Label{MaxSize: d.Size{Height: 32}, Text: "跨网络同账号设备", Font: d.Font{Family: chineseUIFont, PointSize: 16, Bold: true}},
+							d.Composite{
+
+								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
+								Children: []d.Widget{
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "在线设备", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Label{MaxSize: d.Size{Height: 22}, AssignTo: &hint, Text: "正在查找同一账号的电脑…"},
+									d.ComboBox{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &picker},
+									d.Composite{
+										Layout: d.HBox{MarginsZero: true, Spacing: 10},
+										Children: []d.Widget{
+											d.PushButton{MaxSize: d.Size{Height: 34}, Text: "配对所选电脑", MinSize: d.Size{Width: 136, Height: 34}, OnClicked: connect},
+											d.PushButton{MaxSize: d.Size{Height: 34}, Text: "远程连接…", MinSize: d.Size{Width: 112, Height: 34}, OnClicked: remote},
+											d.HSpacer{},
+										},
+									},
+								},
+							},
+							d.VSpacer{},
+						},
+					},
+				},
+			},
+		},
+	}
 	if e := mw.Create(); e != nil {
 		return e
 	}
 	defer w.Dispose()
+	styleDesktopControls(w, func(button *walk.PushButton) bool {
+		return button == nav[currentPage] || button == sendButton || button == pairButton
+	})
+	// The compositor restores square edges automatically when maximized.
+	const dwmWindowCornerPreference = 33
+	round := uint32(2) // DWMWCP_ROUND
+	setAttribute := windows.NewLazySystemDLL("dwmapi.dll").NewProc("DwmSetWindowAttribute")
+	if setAttribute.Find() == nil {
+		setAttribute.Call(uintptr(w.Handle()), dwmWindowCornerPreference, uintptr(unsafe.Pointer(&round)), unsafe.Sizeof(round))
+	}
 	showPeer()
 	if x, e := os.Executable(); e == nil {
 		if icon, e := walk.NewIconExtractedFromFile(x, 0, 32); e == nil {
@@ -422,7 +598,7 @@ func dashboard(root string, initial []string) error {
 				w.Synchronize(func() {
 					showPeer()
 					refresh()
-					if tabs != nil && tabs.CurrentIndex() == 1 {
+					if currentPage == 1 {
 						showLocalIP()
 					}
 				})
