@@ -119,15 +119,17 @@ func serveFiles(root string, onSaved func(string)) error {
 		go node.start()
 	}
 	defer node.stop()
+	stopDiscovery := listenDiscovery(node.self)
+	defer stopDiscovery()
 	return srv.ListenAndServeTLS("", "")
 }
 func routes(root string, received func(string)) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+api+"info", func(w http.ResponseWriter, r *http.Request) {
-		host, _ := os.Hostname()
+		host := deviceName(root)
 		json.NewEncoder(w).Encode(map[string]string{"alias": host, "version": "1"})
 	})
-	mux.HandleFunc("PUT "+api+"file", func(w http.ResponseWriter, r *http.Request) {
+	receiveItem := func(w http.ResponseWriter, r *http.Request) {
 		var peer config
 		b, e := os.ReadFile(filepath.Join(root, "peer.json"))
 		if e != nil || json.Unmarshal(b, &peer) != nil || r.TLS == nil || len(r.TLS.PeerCertificates) == 0 || digest(r.TLS.PeerCertificates[0].Raw) != peer.PeerHash {
@@ -147,14 +149,20 @@ func routes(root string, received func(string)) http.Handler {
 			http.Error(w, "保存失败，请检查接收目录和目录权限", 500)
 			return
 		}
-		path, e := saveFile(dest, name, r.Body, r.ContentLength)
+		save := saveFile
+		if r.URL.Path == api+"folder" {
+			save = saveFolder
+		}
+		path, e := save(dest, name, r.Body, r.ContentLength)
 		if e != nil {
 			http.Error(w, "保存失败，请检查接收目录、磁盘空间、文件名和目录权限", 500)
 			return
 		}
 		received(path)
 		w.WriteHeader(201)
-	})
+	}
+	mux.HandleFunc("PUT "+api+"file", receiveItem)
+	mux.HandleFunc("PUT "+api+"folder", receiveItem)
 	return mux
 }
 func safeName(name string) bool {

@@ -35,6 +35,7 @@ const port = "53318"
 type config struct {
 	root                                       string
 	Address, PeerHash, Certificate, PrivateKey string
+	PeerName                                   string `json:",omitempty"`
 	RemoteAddress                              string `json:",omitempty"`
 }
 
@@ -188,8 +189,8 @@ func sendProgress(c config, paths []string, update transferProgress) (err error)
 		if e != nil {
 			return sendFailure(e, p, 0, len(paths), false)
 		}
-		if !st.Mode().IsRegular() {
-			return fmt.Errorf("请先压缩文件夹：%s", p)
+		if !st.Mode().IsRegular() && !st.IsDir() {
+			return fmt.Errorf("不支持该文件类型：%s", p)
 		}
 	}
 	for i, p := range paths {
@@ -208,21 +209,43 @@ func sendProgress(c config, paths []string, update transferProgress) (err error)
 	return nil
 }
 func upload(cl *http.Client, address, path string, report func(int)) error {
+	path, e := filepath.Abs(path)
+	if e != nil {
+		return e
+	}
+	name := filepath.Base(path)
+	if !safeName(name) {
+		return errors.New("请选择可命名的文件或文件夹")
+	}
+	endpoint := "file"
+	st, e := os.Lstat(path)
+	if e != nil {
+		return e
+	}
+	if st.IsDir() {
+		path, e = packFolder(filepath.Clean(path))
+		if e != nil {
+			return e
+		}
+		defer os.Remove(path)
+		endpoint = "folder"
+	} else if !st.Mode().IsRegular() {
+		return errors.New("不支持链接或特殊文件")
+	}
 	f, e := os.Open(path)
 	if e != nil {
 		return e
 	}
 	defer f.Close()
-	st, e := f.Stat()
+	st, e = f.Stat()
 	if e != nil {
 		return e
 	}
-	name := filepath.Base(path)
 	var body io.Reader = http.NoBody
 	if st.Size() > 0 {
 		body = io.TeeReader(f, &progress{name: name, size: st.Size(), report: report})
 	}
-	req, e := http.NewRequest("PUT", "https://"+address+api+"file?"+url.Values{"name": {name}}.Encode(), body)
+	req, e := http.NewRequest("PUT", "https://"+address+api+endpoint+"?"+url.Values{"name": {name}}.Encode(), body)
 	if e != nil {
 		return e
 	}
@@ -233,6 +256,9 @@ func upload(cl *http.Client, address, path string, report func(int)) error {
 		return e
 	}
 	defer resp.Body.Close()
+	if endpoint == "folder" && resp.StatusCode == 404 {
+		return errors.New("请更新接收端 LANSend 以接收文件夹")
+	}
 	if resp.StatusCode != 201 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(msg)))
@@ -251,6 +277,12 @@ func run(args []string) error {
 	path := filepath.Join(root, "peer.json")
 	if len(args) == 1 {
 		switch args[0] {
+		case "peer-status":
+			fmt.Println(peerStatus(root))
+			return nil
+		case "device-name":
+			fmt.Println(deviceName(root))
+			return nil
 		case "devices":
 			st, e := nodeRequest(root, "devices")
 			if e != nil {
@@ -273,6 +305,12 @@ func run(args []string) error {
 		case "ready":
 			return ready(root)
 		}
+	}
+	if len(args) == 3 && args[0] == "set-peer-nickname" {
+		return setPeerNickname(root, args[1], args[2])
+	}
+	if len(args) == 2 && args[0] == "set-device-name" {
+		return setDeviceName(root, args[1])
 	}
 	if len(args) == 2 && args[0] == "invite-new" {
 		code, err := makeInvite(root, args[1])
@@ -313,6 +351,7 @@ func sendSaved(root string, paths []string, progress transferProgress) error {
 	if e != nil {
 		return e
 	}
+	identity.PeerName = c.PeerName
 	identity.PeerHash = c.PeerHash
 	identity.Address = c.Address
 	identity.RemoteAddress = c.RemoteAddress

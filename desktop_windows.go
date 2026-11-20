@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	_ "embed"
-	"encoding/json"
 	"fmt"
 	"github.com/lxn/walk"
 	d "github.com/lxn/walk/declarative"
@@ -104,44 +103,118 @@ func dashboard(root string, initial []string) error {
 	var bar *walk.ProgressBar
 	var sendButton, pairButton *walk.PushButton
 	var busy bool
+	var checking bool
 	showPeer := func() {
-		var c config
-		b, _ := os.ReadFile(filepath.Join(root, "peer.json"))
-		json.Unmarshal(b, &c)
-		label := "尚未配对 · 请在「配对与设置」中连接设备"
-		if c.PeerHash != "" {
-			label = "已配对"
+		if checking {
+			return
 		}
-		peerText.SetText(label)
+		checking = true
+		go func() { label := peerStatus(root); w.Synchronize(func() { checking = false; peerText.SetText(label) }) }()
 	}
-	sendFiles := func(paths []string) {
-		if busy || len(paths) == 0 {
+	type queueItem struct{ path, state, detail string }
+	var items []*queueItem
+	var queueList *walk.ListBox
+	var retryButton *walk.PushButton
+	var sending bool
+	refreshQueue := func() {
+		rows := make([]string, len(items))
+		failed := false
+		for i, item := range items {
+			rows[i] = item.state + "   " + filepath.Base(item.path)
+			if item.detail != "" {
+				rows[i] += "   " + item.detail
+			}
+			if item.state == "失败" {
+				failed = true
+			}
+		}
+		queueList.SetModel(rows)
+		retryButton.SetEnabled(failed && !busy)
+	}
+	var nextItem func()
+	nextItem = func() {
+		var item *queueItem
+		for _, candidate := range items {
+			if candidate.state == "等待" {
+				item = candidate
+				break
+			}
+		}
+		if item == nil {
+			busy = false
+			sending = false
+			pairButton.SetEnabled(true)
+			failed := 0
+			for _, it := range items {
+				if it.state == "失败" {
+					failed++
+				}
+			}
+			status.SetText(fmt.Sprintf("已完成 %d 项，失败 %d 项", len(items)-failed, failed))
+			refreshQueue()
 			return
 		}
 		busy = true
-		sendButton.SetEnabled(false)
+		sending = true
 		pairButton.SetEnabled(false)
+		item.state = "发送中"
+		status.SetText("正在发送 " + filepath.Base(item.path))
 		bar.SetValue(0)
+		refreshQueue()
 		go func() {
-			e := sendSaved(root, paths, func(i, total int, name string, percent int) {
-				w.Synchronize(func() {
-					status.SetText(fmt.Sprintf("%d / %d    %s    %d%%", i, total, name, percent))
-					bar.SetValue(((i-1)*100 + percent) / total)
-				})
-			})
+			e := sendSaved(root, []string{item.path}, func(_, _ int, _ string, percent int) { w.Synchronize(func() { bar.SetValue(percent) }) })
 			w.Synchronize(func() {
-				busy = false
-				sendButton.SetEnabled(true)
-				pairButton.SetEnabled(true)
 				if e != nil {
-					status.SetText("发送未完成")
-					walk.MsgBox(w, "发送未完成", e.Error(), walk.MsgBoxIconWarning)
+					item.state = "失败"
+					item.detail = e.Error()
 				} else {
+					item.state = "已完成"
 					bar.SetValue(100)
-					status.SetText(fmt.Sprintf("已发送 %d 个文件", len(paths)))
 				}
+				nextItem()
 			})
 		}()
+	}
+	sendFiles := func(paths []string) {
+		if (busy && !sending) || len(paths) == 0 {
+			return
+		}
+		for _, path := range paths {
+			items = append(items, &queueItem{path: path, state: "等待"})
+		}
+		if sending {
+			refreshQueue()
+		} else {
+			nextItem()
+		}
+	}
+	retryFailed := func() {
+		if busy {
+			return
+		}
+		for _, item := range items {
+			if item.state == "失败" {
+				item.state = "等待"
+				item.detail = ""
+			}
+		}
+		nextItem()
+	}
+	var nameField, nicknameField *walk.LineEdit
+	var nicknameFor string
+	loadNickname := func() {
+		paired, _ := readPeer(filepath.Join(root, "peer.json"))
+		nicknameFor = paired.PeerHash
+		nicknameField.SetEnabled(nicknameFor != "")
+		nicknameField.SetText(peerNickname(root, nicknameFor))
+	}
+	saveName := func() {
+		if err := setDeviceName(root, nameField.Text()); err != nil {
+			walk.MsgBox(w, "设备名称", err.Error(), walk.MsgBoxIconWarning)
+			return
+		}
+		nameField.SetText(deviceName(root))
+		walk.MsgBox(w, "设备名称", "已保存，配对设备上线后会显示新名称。", walk.MsgBoxIconInformation)
 	}
 	choose := func() {
 		dlg := walk.FileDialog{Title: "选择要发送的文件"}
@@ -195,6 +268,7 @@ func dashboard(root string, initial []string) error {
 					return
 				}
 				showPeer()
+				loadNickname()
 				msg := "已双向配对，两台电脑可以互传文件。"
 				if copyCode {
 					msg = "已复制 LANSend 码，请在另一台电脑点击「从剪贴板配对」。配对码 5 分钟内有效。"
@@ -373,6 +447,7 @@ func dashboard(root string, initial []string) error {
 			nav[i].Invalidate()
 		}
 		if index == 1 {
+			loadNickname()
 			showSaveDir()
 		}
 		refresh()
@@ -413,11 +488,20 @@ func dashboard(root string, initial []string) error {
 								Layout: d.VBox{Margins: d.Margins{Top: 20, Bottom: 20}, Spacing: 10},
 								Children: []d.Widget{
 									d.Label{MaxSize: d.Size{Height: 36}, Text: "发送文件", Font: d.Font{Family: chineseUIFont, PointSize: 18, Bold: true}, TextColor: dark},
-									d.Label{MaxSize: d.Size{Height: 22}, Text: "将文件拖入窗口，或选择多个文件一起发送。", TextColor: walk.RGB(58, 86, 86)},
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "将文件或文件夹拖入窗口，或点击下方按钮选择。", TextColor: walk.RGB(58, 86, 86)},
 									d.Composite{
 										Layout: d.HBox{MarginsZero: true, Spacing: 10},
 										Children: []d.Widget{
 											d.PushButton{MaxSize: d.Size{Height: 34}, AssignTo: &sendButton, Text: "选择文件并发送…", MinSize: d.Size{Width: 148, Height: 34}, OnClicked: choose},
+											d.PushButton{Text: "选择文件夹…", MinSize: d.Size{Width: 110, Height: 34}, MaxSize: d.Size{Height: 34}, OnClicked: func() {
+												dlg := walk.FileDialog{Title: "选择要发送的文件夹"}
+												ok, e := dlg.ShowBrowseFolder(w)
+												if e != nil {
+													walk.MsgBox(w, "选择文件夹", e.Error(), walk.MsgBoxIconWarning)
+												} else if ok {
+													sendFiles([]string{dlg.FilePath})
+												}
+											}},
 											d.HSpacer{},
 										},
 									},
@@ -427,7 +511,8 @@ func dashboard(root string, initial []string) error {
 
 								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
 								Children: []d.Widget{
-									d.Label{MaxSize: d.Size{Height: 22}, Text: "传输状态", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.Label{MaxSize: d.Size{Height: 22}, Text: "传输队列", Font: d.Font{Family: chineseUIFont, PointSize: 10, Bold: true}, TextColor: dark},
+									d.ListBox{AssignTo: &queueList, MinSize: d.Size{Height: 75}, MaxSize: d.Size{Height: 130}},
 									d.Label{MaxSize: d.Size{Height: 22}, AssignTo: &status, Text: "等待发送"},
 									d.ProgressBar{AssignTo: &bar, MaxValue: 100, MaxSize: d.Size{Height: 10}, MinSize: d.Size{Height: 10}},
 								},
@@ -435,6 +520,7 @@ func dashboard(root string, initial []string) error {
 							d.Composite{
 								Layout: d.HBox{MarginsZero: true},
 								Children: []d.Widget{
+									d.PushButton{AssignTo: &retryButton, Text: "重试失败项", Enabled: false, MaxSize: d.Size{Height: 30}, OnClicked: retryFailed},
 									d.HSpacer{},
 									d.PushButton{MaxSize: d.Size{Height: 30}, Text: "打开收件箱", MinSize: d.Size{Width: 112, Height: 30}, OnClicked: inbox},
 								},
@@ -445,6 +531,18 @@ func dashboard(root string, initial []string) error {
 					d.Composite{AssignTo: &pages[1], Visible: false,
 						Layout: d.VBox{Margins: d.Margins{Top: 14, Bottom: 16}, Spacing: 12},
 						Children: []d.Widget{
+							d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
+								d.Label{Text: "本机名称"}, d.LineEdit{AssignTo: &nameField, Text: deviceName(root), StretchFactor: 1}, d.PushButton{Text: "保存名称", MaxSize: d.Size{Height: 32}, OnClicked: saveName},
+							}},
+							d.Composite{Layout: d.HBox{MarginsZero: true, Spacing: 8}, Children: []d.Widget{
+								d.Label{Text: "对方备注"}, d.LineEdit{AssignTo: &nicknameField, CueBanner: "留空使用对方的设备名称", StretchFactor: 1}, d.PushButton{Text: "保存备注", MaxSize: d.Size{Height: 32}, OnClicked: func() {
+									if err := setPeerNickname(root, nicknameFor, nicknameField.Text()); err != nil {
+										walk.MsgBox(w, "对方备注", err.Error(), walk.MsgBoxIconWarning)
+										loadNickname()
+										return
+									}
+									showPeer()
+								}}}},
 							d.Composite{
 
 								Layout: d.VBox{Margins: d.Margins{Top: 10, Bottom: 10}, Spacing: 7},
@@ -562,8 +660,6 @@ func dashboard(root string, initial []string) error {
 				w.Synchronize(func() {
 					showPeer()
 					refresh()
-					if currentPage == 1 {
-					}
 				})
 			case <-stop:
 				return

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -29,6 +30,9 @@ func keepPeerRoutes(next *config, old config) {
 	if old.PeerHash != next.PeerHash || old.Address == "" {
 		return
 	}
+	if next.PeerName == "" {
+		next.PeerName = old.PeerName
+	}
 	if isRemoteAddress(next.Address) {
 		if !isRemoteAddress(old.Address) {
 			next.RemoteAddress = next.Address
@@ -42,42 +46,69 @@ func keepPeerRoutes(next *config, old config) {
 }
 
 func chooseRoute(c config) (string, error) {
-	if c.RemoteAddress == "" {
-		return c.Address, nil
-	}
+	address, _, err := resolvePeer(c)
+	return address, err
+}
+func resolvePeer(c config) (string, string, error) {
+	return resolvePeerUsing(c, discoverPeer)
+}
+func resolvePeerUsing(c config, lookup func(string) (string, error)) (string, string, error) {
 	cl, _, err := client(c, false)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer cl.CloseIdleConnections()
 	var failures []error
-	for i, address := range []string{c.Address, c.RemoteAddress} {
-		timeout := 2 * time.Second
-		if i == 1 {
-			timeout = 12 * time.Second
+	try := func(address string, timeout time.Duration, discovered bool) (string, bool) {
+		alias, e := probeRoute(cl, address, timeout)
+		if e != nil {
+			failures = append(failures, e)
+			return "", false
 		}
-		if err = probeRoute(cl, address, timeout); err == nil {
-			return address, nil
+		if discovered || (alias != "" && alias != c.PeerName) {
+			next := config{Address: address, PeerHash: c.PeerHash, PeerName: alias}
+			e = savePairExpected(filepath.Join(c.root, "peer.json"), next, false, &c.PeerHash)
+			if e != nil {
+				failures = append(failures, e)
+				return "", false
+			}
 		}
-		failures = append(failures, fmt.Errorf("%s：%w", address, err))
+		return alias, true
 	}
-	return "", fmt.Errorf("两条连接都未成功，请确认接收端在线且两端 Tailscale 已连接：%w", errors.Join(failures...))
+	if alias, ok := try(c.Address, 2*time.Second, false); ok {
+		return c.Address, alias, nil
+	}
+	if candidate, e := lookup(c.PeerHash); e == nil && candidate != c.Address {
+		if alias, ok := try(candidate, 2*time.Second, true); ok {
+			return candidate, alias, nil
+		}
+	}
+	if c.RemoteAddress != "" {
+		if alias, ok := try(c.RemoteAddress, 10*time.Second, false); ok {
+			return c.RemoteAddress, alias, nil
+		}
+	} else if isRemoteAddress(c.Address) {
+		if alias, ok := try(c.Address, 10*time.Second, false); ok {
+			return c.Address, alias, nil
+		}
+	}
+	return "", "", fmt.Errorf("设备未能连接：%w", errors.Join(failures...))
 }
-func probeRoute(cl *http.Client, address string, timeout time.Duration) error {
+func probeRoute(cl *http.Client, address string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+address+api+"info", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	res, err := cl.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer res.Body.Close()
-	var info struct{ Version string }
+	var info struct{ Version, Alias string }
 	if res.StatusCode != 200 || json.NewDecoder(io.LimitReader(res.Body, 65536)).Decode(&info) != nil || info.Version != "1" {
-		return errors.New("接收器未就绪")
+		return "", errors.New("接收器未就绪")
 	}
-	return nil
+	return sanitizeDisplayName(info.Alias), nil
 }

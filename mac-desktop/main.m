@@ -1,5 +1,19 @@
 #import <Cocoa/Cocoa.h>
 
+@interface TransferDropView : NSView
+@property(copy) void (^enqueue)(NSArray<NSURL *> *);
+@end
+@implementation TransferDropView
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    return [sender.draggingPasteboard canReadObjectForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}] ? NSDragOperationCopy : NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray *urls=[sender.draggingPasteboard readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
+    if (!urls.count) return NO;
+    self.enqueue(urls); return YES;
+}
+@end
+
 @interface Desktop:NSObject <NSApplicationDelegate,NSWindowDelegate>
 @property NSWindow *window;
 @property NSTextField *peer,*status,*receiveDirField;
@@ -11,6 +25,14 @@
 @property BOOL scanning;
 @property NSArray *lastDevices;
 @property NSTimer *scanTimer;
+@property BOOL probing;
+@property BOOL sending;
+@property NSTextField *nameField;
+@property NSTextView *queueView;
+@property NSButton *retryButton;
+@property NSMutableArray<NSMutableDictionary *> *queue;
+@property NSMutableArray<NSURL *> *pendingOpen;
+@property BOOL readyToSend;
 @property BOOL busy;
 @property NSString *engine;
 @property NSTask *receiver;
@@ -29,12 +51,21 @@
     NSButton *b=[NSButton buttonWithTitle:title target:self action:action];b.frame=rect;[parent addSubview:b];return b;
 }
 - (void)refreshPeer {
-    NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend/peer.json"];
-    NSData *data=[NSData dataWithContentsOfFile:path];NSDictionary *c=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
-    self.peer.stringValue=[c[@"PeerHash"] length]?@"已配对":@"尚未配对";
+    if (!self.engine || self.probing || !self.window.visible) return;
+    self.probing=YES;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
+        NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:self.engine];task.arguments=@[@"peer-status"];
+        NSPipe *pipe=[NSPipe pipe];task.standardOutput=pipe;
+        NSString *text=nil;
+        if ([task launchAndReturnError:nil]){
+            NSData *data=[pipe.fileHandleForReading readDataToEndOfFile];[task waitUntilExit];
+            if (!task.terminationStatus) text=[[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{self.probing=NO;if(text.length)self.peer.stringValue=text;});
+    });
 }
 - (void)run:(NSString*)program args:(NSArray*)args input:(NSString*)input done:(void(^)(BOOL,NSString*))done {
-    self.busy=YES;self.sendButton.enabled=NO;self.pairButton.enabled=NO;
+    self.busy=YES;self.sendButton.enabled=self.sending;self.pairButton.enabled=NO;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
         NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:program];task.arguments=args;
         NSPipe *output=[NSPipe pipe];task.standardOutput=output;task.standardError=output;
@@ -53,20 +84,82 @@
             [task waitUntilExit];ok=task.terminationStatus==0;
         }
         NSString *message=e.localizedDescription?:([[NSString alloc]initWithData:tail encoding:NSUTF8StringEncoding]?:@"");
-        dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;self.sendButton.enabled=YES;self.pairButton.enabled=YES;[self.progress stopAnimation:nil];done(ok,[message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);});
+        dispatch_async(dispatch_get_main_queue(),^{self.busy=NO;self.sendButton.enabled=YES;self.pairButton.enabled=YES;[self.progress stopAnimation:nil];done(ok,[message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]);[self drainPending];});
     });
 }
 - (void)error:(NSString*)msg {NSAlert *a=[NSAlert new];a.messageText=@"操作未完成";a.informativeText=msg;[a beginSheetModalForWindow:self.window completionHandler:nil];}
-- (void)send:(id)sender {
-    NSOpenPanel *p=NSOpenPanel.openPanel;p.allowsMultipleSelection=YES;p.canChooseDirectories=NO;p.prompt=@"发送";
-    [p beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
-        if(result!=NSModalResponseOK)return;
-        NSMutableArray *args=[NSMutableArray arrayWithObject:@"send"];for(NSURL *u in p.URLs)[args addObject:u.path];
-        self.status.stringValue=@"正在发送…";[self.progress startAnimation:nil];
-        [self run:self.engine args:args input:nil done:^(BOOL ok,NSString *msg){
-            self.status.stringValue=ok?[NSString stringWithFormat:@"已发送 %lu 个文件",(unsigned long)(args.count-1)]:@"发送未完成";if(!ok)[self error:[msg componentsSeparatedByString:@"\n"].lastObject];
-        }];
+- (void)refreshQueue {
+    NSMutableArray *rows=[NSMutableArray array];BOOL failed=NO;
+    for (NSDictionary *item in self.queue) {
+        failed |= [item[@"state"] isEqual:@"失败"];
+        [rows addObject:[NSString stringWithFormat:@"%@   %@   %@",item[@"state"],[item[@"path"] lastPathComponent],item[@"detail"]?:@""]];
+    }
+    self.queueView.string=[rows componentsJoinedByString:@"\n"]; self.retryButton.enabled=failed&&!self.busy;
+}
+- (void)nextItem {
+    NSMutableDictionary *next=nil;NSUInteger failed=0;
+    for (NSMutableDictionary *item in self.queue){
+        if ([item[@"state"] isEqual:@"失败"])failed++;
+        if (!next && [item[@"state"] isEqual:@"等待"])next=item;
+    }
+    if (!next) {
+        self.sending=NO;[self refreshQueue];
+        self.status.stringValue=[NSString stringWithFormat:@"已完成 %lu 项，失败 %lu 项",(unsigned long)(self.queue.count-failed),(unsigned long)failed];
+        return;
+    }
+    self.sending=YES;next[@"state"]=@"发送中";self.retryButton.enabled=NO;[self refreshQueue];
+    self.status.stringValue=[@"正在发送 " stringByAppendingString:[next[@"path"] lastPathComponent]];
+    [self.progress startAnimation:nil];
+    [self run:self.engine args:@[@"send",next[@"path"]] input:nil done:^(BOOL ok,NSString *msg){
+        next[@"state"]=ok?@"已完成":@"失败";
+        next[@"detail"]=ok?@"":([msg componentsSeparatedByString:@"\n"].lastObject?:@"");
+        [self nextItem];
     }];
+}
+- (void)enqueueURLs:(NSArray<NSURL *> *)urls {
+    if (!self.readyToSend || (self.busy && !self.sending)){
+        if (!self.pendingOpen) self.pendingOpen=[NSMutableArray array];
+        [self.pendingOpen addObjectsFromArray:urls];return;
+    }
+    for (NSURL *url in urls) if(url.isFileURL)[self.queue addObject:[@{@"path":url.path,@"state":@"等待"} mutableCopy]];
+    if (self.sending)[self refreshQueue];else if(urls.count)[self nextItem];
+}
+- (void)drainPending {
+    if (self.readyToSend && !self.busy && self.pendingOpen.count){
+        NSArray *pending=[self.pendingOpen copy];[self.pendingOpen removeAllObjects];[self enqueueURLs:pending];
+    }
+}
+- (void)application:(NSApplication *)app openURLs:(NSArray<NSURL *> *)urls {
+    [self enqueueURLs:urls];[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [self.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];
+}
+- (void)retryFailed:(id)sender {
+    if(self.busy)return;
+    for (NSMutableDictionary *item in self.queue)if([item[@"state"] isEqual:@"失败"]){item[@"state"]=@"等待";item[@"detail"]=@"";}
+    [self nextItem];
+}
+- (void)send:(id)sender {
+    NSOpenPanel *p=NSOpenPanel.openPanel;p.allowsMultipleSelection=YES;p.canChooseDirectories=YES;p.canChooseFiles=YES;p.prompt=@"加入发送队列";
+    [p beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){if(result==NSModalResponseOK)[self enqueueURLs:p.URLs];}];
+}
+- (void)editNickname:(id)sender {
+    if(self.busy)return;
+    NSString *root=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend"];
+    NSData *data=[NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:@"peer.json"]];
+    NSDictionary *peer=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+    NSString *key=peer[@"PeerHash"];
+    if(key.length!=64||[key rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location!=NSNotFound){[self error:@"请先配对设备"];return;}
+    NSAlert *alert=[NSAlert new];alert.messageText=@"对方设备备注";alert.informativeText=@"备注仅在本机显示，留空使用对方的设备名称。";
+    NSTextField *field=[[NSTextField alloc]initWithFrame:NSMakeRect(0,0,280,24)];
+    field.stringValue=[NSString stringWithContentsOfFile:[root stringByAppendingPathComponent:[@"nickname-" stringByAppendingString:key]] encoding:NSUTF8StringEncoding error:nil]?:@"";
+    alert.accessoryView=field;[alert addButtonWithTitle:@"保存"];[alert addButtonWithTitle:@"取消"];
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result){
+        if(result==NSAlertFirstButtonReturn)[self run:self.engine args:@[@"set-peer-nickname",key,field.stringValue] input:nil done:^(BOOL ok,NSString *msg){if(ok)[self refreshPeer];else [self error:msg];}];
+    }];
+}
+- (void)saveDeviceName:(id)sender {
+    if(self.busy)return;
+    [self run:self.engine args:@[@"set-device-name",self.nameField.stringValue] input:nil done:^(BOOL ok,NSString *msg){if(!ok)[self error:msg];}];
 }
 - (void)copyInvite:(id)sender { [self useInvite:YES]; }
 - (void)pasteInvite:(id)sender { [self useInvite:NO]; }
@@ -350,17 +443,30 @@
     [self label:@"LANSend" frame:NSMakeRect(24,48,532,39) size:30 bold:YES view:header].textColor=NSColor.whiteColor;
     self.peer=[self label:@"" frame:NSMakeRect(24,20,532,22) size:14 bold:NO view:header];self.peer.textColor=NSColor.whiteColor;[self refreshPeer];
     NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[@"文件传输",@"配对与设置",@"我的电脑"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tab:)];tabs.frame=NSMakeRect(24,306,324,30);tabs.selectedSegment=0;[v addSubview:tabs];
-    self.transfer=[[NSView alloc]initWithFrame:NSMakeRect(24,16,532,280)];[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
+    self.queue=[NSMutableArray array];
+    TransferDropView *drop=[[TransferDropView alloc]initWithFrame:NSMakeRect(24,16,532,280)];
+    [drop registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    __weak Desktop *weakSelf=self;drop.enqueue=^(NSArray<NSURL *> *urls){[weakSelf enqueueURLs:urls];};
+    self.transfer=drop;[v addSubview:self.transfer];self.settings=[[NSView alloc]initWithFrame:self.transfer.frame];[v addSubview:self.settings];self.settings.hidden=YES;
     [self label:@"发送到已配对设备" frame:NSMakeRect(0,226,532,32) size:22 bold:YES view:self.transfer];
-    self.sendButton=[self button:@"选择文件并发送…" at:NSMakeRect(0,168,168,36) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
+    self.sendButton=[self button:@"选择文件或文件夹…" at:NSMakeRect(0,168,168,36) action:@selector(send:) view:self.transfer];self.sendButton.bezelColor=[NSColor colorWithSRGBRed:.1 green:.46 blue:.41 alpha:1];
     [self button:@"打开收件箱" at:NSMakeRect(178,168,120,36) action:@selector(inbox:) view:self.transfer];
+    self.retryButton=[self button:@"重试失败项" at:NSMakeRect(308,168,120,36) action:@selector(retryFailed:) view:self.transfer];self.retryButton.enabled=NO;
+    NSScrollView *scroll=[[NSScrollView alloc]initWithFrame:NSMakeRect(0,62,532,96)];scroll.hasVerticalScroller=YES;
+    self.queueView=[[NSTextView alloc]initWithFrame:scroll.contentView.bounds];self.queueView.editable=NO;self.queueView.autoresizingMask=NSViewWidthSizable;scroll.documentView=self.queueView;[self.transfer addSubview:scroll];
     self.status=[self label:@"正在启动接收服务…" frame:NSMakeRect(0,34,532,22) size:14 bold:NO view:self.transfer];
     self.progress=[[NSProgressIndicator alloc]initWithFrame:NSMakeRect(0,16,532,8)];self.progress.indeterminate=YES;self.progress.displayedWhenStopped=NO;[self.transfer addSubview:self.progress];
     [self label:@"局域网配对" frame:NSMakeRect(0,242,532,32) size:20 bold:YES view:self.settings];
     [self label:@"在一台电脑复制 LANSend 码，在另一台电脑粘贴即可双向配对。" frame:NSMakeRect(0,210,532,24) size:14 bold:NO view:self.settings];
     [self button:@"复制 LANSend 码" at:NSMakeRect(0,158,148,36) action:@selector(copyInvite:) view:self.settings];
+    [self button:@"对方设备备注…" at:NSMakeRect(310,158,152,36) action:@selector(editNickname:) view:self.settings];
     self.pairButton=[self button:@"从剪贴板配对" at:NSMakeRect(158,158,140,36) action:@selector(pasteInvite:) view:self.settings];
     NSSegmentedControl *mode=[NSSegmentedControl segmentedControlWithLabels:@[@"前台弹窗",@"静默接收"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(changeMode:)];
+    [self label:@"本机名称" frame:NSMakeRect(0,102,62,23) size:13 bold:NO view:self.settings];
+    self.nameField=[[NSTextField alloc]initWithFrame:NSMakeRect(68,102,142,25)];
+    NSString *namePath=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/LANSend/device-name"];
+    self.nameField.stringValue=[NSString stringWithContentsOfFile:namePath encoding:NSUTF8StringEncoding error:nil]?:NSProcessInfo.processInfo.hostName;
+    [self.settings addSubview:self.nameField];[self button:@"保存名称" at:NSMakeRect(214,98,98,32) action:@selector(saveDeviceName:) view:self.settings];
     mode.frame=NSMakeRect(324,98,208,32);mode.selectedSegment=self.silentReceipts?1:0;
     [self.settings addSubview:mode];
     NSBox *sep=[[NSBox alloc]initWithFrame:NSMakeRect(0,78,532,1)];sep.boxType=NSBoxSeparator;[self.settings addSubview:sep];
@@ -376,14 +482,14 @@
  [self button:@"远程连接…" at:NSMakeRect(162,116,118,36) action:@selector(remote:) view:self.devices];
  self.scanTimer=[NSTimer scheduledTimerWithTimeInterval:5 repeats:YES block:^(NSTimer *timer){[self refreshPeer];[self scan];}];
  [self.window center];
-    if ([NSProcessInfo.processInfo.arguments containsObject:@"--background-receiver"]) {
+    if (!self.pendingOpen.count && [NSProcessInfo.processInfo.arguments containsObject:@"--background-receiver"]) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     } else {
         [self.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
     }
-    NSString *res=NSBundle.mainBundle.resourcePath;self.engine=[res stringByAppendingPathComponent:@"engine"];
+    NSString *res=NSBundle.mainBundle.resourcePath;self.engine=[res stringByAppendingPathComponent:@"engine"];[self refreshPeer];
     [self run:@"/bin/bash" args:@[[res stringByAppendingPathComponent:@"Setup.sh"]] input:nil done:^(BOOL ok,NSString *msg){
-        if(ok){[self startReceiver];}else{self.status.stringValue=@"接收服务启动失败";if(self.window.visible)[self error:msg];}
+        if(ok){self.readyToSend=YES;[self startReceiver];}else{self.status.stringValue=@"接收服务启动失败";if(self.window.visible)[self error:msg];}
     }];
 }
 @end

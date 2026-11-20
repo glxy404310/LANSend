@@ -44,23 +44,7 @@
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>set -o pipefail
-msg=$("$HOME/Library/Application Support/LANSend/lansend" send "$@" 2&gt;&amp;1 | /usr/bin/tail -n 1)
-status=$?
-if [ "$status" -eq 0 ]; then
-/usr/bin/osascript - "$msg" &lt;&lt;'OSA'
-on run args
-display notification (item 1 of args) with title "用 LANSend 发送"
-end run
-OSA
-else
-/usr/bin/osascript - "$msg" &lt;&lt;'OSA'
-on run args
-display alert "LANSend 发送失败" message (item 1 of args)
-end run
-OSA
-fi
-exit "$status"
+					<string>exec /usr/bin/open -b local.lansend.desktop "$@"
 </string>
 					<key>CheckedForUserDefaultShell</key>
 					<true/>
