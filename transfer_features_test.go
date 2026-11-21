@@ -92,7 +92,10 @@ func TestRediscoverAndRename(t *testing.T) {
 	c.PeerHash = digest(cert.Certificate[0])
 	c.Address = strings.TrimPrefix(wrong.URL, "https://")
 	peerFile := filepath.Join(sender, "peer.json")
-	if e = savePair(peerFile, c, true); e != nil {
+	if e = savePair(peerFile, c); e != nil {
+		t.Fatal(e)
+	}
+	if e = changePeer(sender, c.PeerHash, "enable-peer"); e != nil {
 		t.Fatal(e)
 	}
 	addr := strings.TrimPrefix(srv.URL, "https://")
@@ -178,7 +181,7 @@ func TestFileAndFolderThroughReceiver(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = savePair(filepath.Join(receiver, "peer.json"), config{PeerHash: peer}, true); e != nil {
+	if e = savePair(filepath.Join(receiver, "peer.json"), config{PeerHash: peer}); e != nil {
 		t.Fatal(e)
 	}
 	server := httptest.NewUnstartedServer(routes(receiver, func(string) {}))
@@ -189,7 +192,7 @@ func TestFileAndFolderThroughReceiver(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = savePair(filepath.Join(sender, "peer.json"), config{Address: strings.TrimPrefix(server.URL, "https://"), PeerHash: hash}, true); e != nil {
+	if e = savePair(filepath.Join(sender, "peer.json"), config{Address: strings.TrimPrefix(server.URL, "https://"), PeerHash: hash}); e != nil {
 		t.Fatal(e)
 	}
 	base := t.TempDir()
@@ -197,6 +200,18 @@ func TestFileAndFolderThroughReceiver(t *testing.T) {
 	os.Mkdir(folder, 0700)
 	file := filepath.Join(base, "file.txt")
 	os.WriteFile(file, []byte("abc"), 0600)
+	if e = sendSaved(sender, []string{file}, nil); e == nil {
+		t.Fatal("disabled target accepted")
+	}
+	if e = changePeer(sender, hash, "enable-peer"); e != nil {
+		t.Fatal(e)
+	}
+	if e = sendSaved(sender, []string{file}, nil); e == nil {
+		t.Fatal("disabled sender accepted")
+	}
+	if e = changePeer(receiver, peer, "enable-peer"); e != nil {
+		t.Fatal(e)
+	}
 	if e = sendSaved(sender, []string{file, folder}, nil); e != nil {
 		t.Fatal(e)
 	}
@@ -222,5 +237,43 @@ func TestFileAndFolderThroughReceiver(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 403 {
 		t.Fatal("accepted unpaired folder", resp.Status)
+	}
+}
+
+func TestConnectedPeerCount(t *testing.T) {
+	root := t.TempDir()
+	if err := initialize(root); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want int) {
+		t.Helper()
+		got, err := connectedPeerCount(root)
+		if err != nil || got != want {
+			t.Fatalf("connected = %d, want %d, err = %v", got, want, err)
+		}
+	}
+	check(0)
+	for i := 0; i < 2; i++ {
+		var id config
+		if err := makeIdentity(&id); err != nil {
+			t.Fatal(err)
+		}
+		cert, err := tls.X509KeyPair([]byte(id.Certificate), []byte(id.PrivateKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewUnstartedServer(routes(t.TempDir(), func(string) {}))
+		srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+		srv.StartTLS()
+		t.Cleanup(srv.Close)
+		peer := config{PeerHash: digest(cert.Certificate[0]), Address: strings.TrimPrefix(srv.URL, "https://")}
+		if err := savePair(filepath.Join(root, "peer.json"), peer); err != nil {
+			t.Fatal(err)
+		}
+		check(i)
+		if err := changePeer(root, peer.PeerHash, "enable-peer"); err != nil {
+			t.Fatal(err)
+		}
+		check(i + 1)
 	}
 }

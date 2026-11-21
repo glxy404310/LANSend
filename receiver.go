@@ -121,6 +121,9 @@ func serveFiles(root string, onSaved func(string)) error {
 	defer node.stop()
 	stopDiscovery := listenDiscovery(node.self)
 	defer stopDiscovery()
+	stopMenus := make(chan struct{})
+	defer close(stopMenus)
+	go watchPeerMenus(root, stopMenus)
 	return srv.ListenAndServeTLS("", "")
 }
 func routes(root string, received func(string)) http.Handler {
@@ -130,10 +133,13 @@ func routes(root string, received func(string)) http.Handler {
 		json.NewEncoder(w).Encode(map[string]string{"alias": host, "version": "1"})
 	})
 	receiveItem := func(w http.ResponseWriter, r *http.Request) {
-		var peer config
-		b, e := os.ReadFile(filepath.Join(root, "peer.json"))
-		if e != nil || json.Unmarshal(b, &peer) != nil || r.TLS == nil || len(r.TLS.PeerCertificates) == 0 || digest(r.TLS.PeerCertificates[0].Raw) != peer.PeerHash {
-			http.Error(w, "接收端尚未与这台电脑配对", 403)
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			http.Error(w, "缺少设备证书", 403)
+			return
+		}
+		peer, e := findPeer(filepath.Join(root, "peer.json"), digest(r.TLS.PeerCertificates[0].Raw))
+		if e != nil || !peer.Enabled {
+			http.Error(w, "请在接收端配对并启用这台设备", 403)
 			return
 		}
 		name := r.URL.Query().Get("name")

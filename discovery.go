@@ -9,9 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/sync/errgroup"
 )
 
 const discoveryPrefix = "LANSend/1 discover "
@@ -50,7 +53,7 @@ func setPeerNickname(root, hash, name string) error {
 	if err != nil {
 		return err
 	}
-	paired, err := readPeer(filepath.Join(root, "peer.json"))
+	paired, err := findPeer(filepath.Join(root, "peer.json"), hash)
 	if err != nil {
 		return err
 	}
@@ -178,10 +181,12 @@ func peerStatus(root string) string {
 	if nickname != "" {
 		name = nickname
 	}
+	if !stored.Enabled {
+		return name + " · 未启用"
+	}
 	id, e := loadIdentity(root)
 	if e == nil {
-		id.Address, id.RemoteAddress, id.PeerHash, id.PeerName = stored.Address, stored.RemoteAddress, stored.PeerHash, stored.PeerName
-		_, alias, e := resolvePeer(id)
+		_, alias, e := resolveStoredPeer(id, stored)
 		if e == nil {
 			if alias != "" && nickname == "" {
 				name = alias
@@ -190,4 +195,36 @@ func peerStatus(root string) string {
 		}
 	}
 	return fmt.Sprintf("%s · 离线", name)
+}
+
+func resolveStoredPeer(id, stored config) (string, string, error) {
+	id.Address, id.RemoteAddress, id.PeerHash, id.PeerName = stored.Address, stored.RemoteAddress, stored.PeerHash, stored.PeerName
+	return resolvePeer(id)
+}
+
+func connectedPeerCount(root string) (int, error) {
+	peers, err := peersAt(filepath.Join(root, "peer.json"))
+	if err != nil || len(peers) == 0 {
+		return 0, err
+	}
+	id, err := loadIdentity(root)
+	if err != nil {
+		return 0, err
+	}
+	var online atomic.Int32
+	var probes errgroup.Group
+	probes.SetLimit(4)
+	for _, peer := range peers {
+		if !peer.Enabled {
+			continue
+		}
+		probes.Go(func() error {
+			if _, _, err := resolveStoredPeer(id, peer); err == nil {
+				online.Add(1)
+			}
+			return nil
+		})
+	}
+	probes.Wait()
+	return int(online.Load()), nil
 }

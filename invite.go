@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,8 +23,8 @@ const inviteLifetime = 5 * time.Minute
 
 type lanInvite struct {
 	sync.Mutex
-	token, expected, claimed string
-	expires                  time.Time
+	token, claimed string
+	expires        time.Time
 }
 
 func parseInvite(code string) (address, fingerprint, token string, err error) {
@@ -53,7 +54,12 @@ func invitePost(root, address, pin, action, body string) (string, error) {
 	}
 	cl.Timeout = 8 * time.Second
 	defer cl.CloseIdleConnections()
-	resp, e := cl.Post("https://"+address+api+action, "text/plain", strings.NewReader(body))
+	req, e := http.NewRequest(http.MethodPost, "https://"+address+api+action, strings.NewReader(body))
+	if e != nil {
+		return "", e
+	}
+	req.Header.Set("X-LANSend-Name", url.QueryEscape(deviceName(root)))
+	resp, e := cl.Do(req)
 	if e != nil {
 		if errors.Is(e, errPeerCertificateChanged) {
 			return "", errors.New("设备身份与配对码不符，请重新复制")
@@ -107,17 +113,11 @@ func joinInvite(root, code, expected string) error {
 		return errors.New("这是本机的配对码，请复制另一台电脑上的配对码")
 	}
 	path := filepath.Join(root, "peer.json")
-	old, e := readPeer(path)
+	name, e := invitePost(root, addr, pin, "invite/join", token)
 	if e != nil {
 		return e
 	}
-	if old.PeerHash != pin && old.PeerHash != expected {
-		return errPeerOccupied
-	}
-	if _, e = invitePost(root, addr, pin, "invite/join", token); e != nil {
-		return e
-	}
-	return savePairExpected(path, config{Address: addr, PeerHash: pin}, false, &expected)
+	return savePair(path, config{Address: addr, PeerHash: pin, PeerName: sanitizeDisplayName(name)})
 }
 
 func (inv *lanInvite) register(mux *http.ServeMux, root, self string) {
@@ -128,7 +128,7 @@ func (inv *lanInvite) register(mux *http.ServeMux, root, self string) {
 			http.Error(w, "仅本机可生成配对码", 403)
 			return
 		}
-		data, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 64))
+		_, e := io.ReadAll(http.MaxBytesReader(w, r.Body, 64))
 		if e != nil {
 			http.Error(w, "请求无效", 400)
 			return
@@ -140,18 +140,13 @@ func (inv *lanInvite) register(mux *http.ServeMux, root, self string) {
 		}
 		inv.Lock()
 		defer inv.Unlock()
-		old, e := readPeer(path)
-		if e != nil || old.PeerHash != string(data) {
-			http.Error(w, "配对状态已改变，请重新确认", 409)
-			return
-		}
 		secret := make([]byte, 24)
 		if _, e = rand.Read(secret); e != nil {
 			http.Error(w, "无法生成配对码", 500)
 			return
 		}
 		inv.token = base64.RawURLEncoding.EncodeToString(secret)
-		inv.expected = old.PeerHash
+
 		inv.claimed = ""
 		inv.expires = time.Now().Add(inviteLifetime)
 		w.Header().Set("Cache-Control", "no-store")
@@ -180,14 +175,12 @@ func (inv *lanInvite) register(mux *http.ServeMux, root, self string) {
 			return
 		}
 		// A retry from the same certificate may acknowledge a lost response, but cannot restore a replaced pairing.
-		expected := inv.expected
-		if inv.claimed != "" {
-			expected = peer
-		}
-		if e = savePairExpected(path, config{Address: net.JoinHostPort(host, port), PeerHash: peer}, false, &expected); e != nil {
+		name, _ := url.QueryUnescape(r.Header.Get("X-LANSend-Name"))
+		if e = storePair(path, config{Address: net.JoinHostPort(host, port), PeerHash: peer, PeerName: sanitizeDisplayName(name)}, inv.claimed != ""); e != nil {
 			http.Error(w, "无法保存配对，请检查现有配对后重试", 409)
 			return
 		}
 		inv.claimed = peer
+		fmt.Fprint(w, deviceName(root))
 	})
 }

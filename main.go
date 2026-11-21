@@ -33,6 +33,7 @@ const api = "/lansend/v1/"
 const port = "53318"
 
 type config struct {
+	Enabled                                    bool
 	root                                       string
 	Address, PeerHash, Certificate, PrivateKey string
 	PeerName                                   string `json:",omitempty"`
@@ -110,50 +111,8 @@ func pair(path, addr string, code func() string) error {
 	if !strings.EqualFold(strings.TrimSpace(answer), c.PeerHash[:12]) {
 		return errors.New("校验码不匹配，未更改配对")
 	}
-	return savePair(path, c, true)
-}
-func savePair(path string, c config, replace bool) error {
-	return savePairExpected(path, c, replace, nil)
-}
-func savePairExpected(path string, c config, replace bool, expected *string) error {
-	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
-		return e
-	}
-	lock, e := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return e
-	}
-	defer lock.Close()
-	if e = lockPeerFile(lock); e != nil {
-		return e
-	}
-	old, e := readPeer(path)
-	if e != nil {
-		return e
-	}
-	if expected != nil && old.PeerHash != *expected && old.PeerHash != c.PeerHash {
-		return errPeerOccupied
-	}
-	if expected == nil && !replace && old.PeerHash != "" && old.PeerHash != c.PeerHash {
-		return errPeerOccupied
-	}
-	keepPeerRoutes(&c, old)
-	c.Certificate = ""
-	c.PrivateKey = ""
-	f, e := os.CreateTemp(filepath.Dir(path), "pair-")
-	if e != nil {
-		return e
-	}
-	defer os.Remove(f.Name())
-	e = json.NewEncoder(f).Encode(c)
-	ce := f.Close()
-	if e != nil {
-		return e
-	}
-	if ce != nil {
-		return ce
-	}
-	return os.Rename(f.Name(), path)
+	c.PeerName = info.Alias
+	return savePair(path, c)
 }
 
 type progress struct {
@@ -277,6 +236,13 @@ func run(args []string) error {
 	path := filepath.Join(root, "peer.json")
 	if len(args) == 1 {
 		switch args[0] {
+		case "connected-peer-count":
+			count, err := connectedPeerCount(root)
+			if err != nil {
+				return err
+			}
+			fmt.Println(count)
+			return nil
 		case "peer-status":
 			fmt.Println(peerStatus(root))
 			return nil
@@ -304,6 +270,15 @@ func run(args []string) error {
 			return receive(root)
 		case "ready":
 			return ready(root)
+		}
+	}
+	if len(args) >= 3 && args[0] == "send-to" {
+		return sendTo(root, args[1], args[2:], nil)
+	}
+	if len(args) == 2 {
+		switch args[0] {
+		case "enable-peer", "disable-peer", "select-peer", "unpair":
+			return changePeer(root, args[1], args[0])
 		}
 	}
 	if len(args) == 3 && args[0] == "set-peer-nickname" {
@@ -339,13 +314,19 @@ func run(args []string) error {
 	return sendSaved(root, args[1:], nil)
 }
 func sendSaved(root string, paths []string, progress transferProgress) error {
-	b, e := os.ReadFile(filepath.Join(root, "peer.json"))
+	c, e := readPeer(filepath.Join(root, "peer.json"))
 	if e != nil {
-		return errors.New("请先在配对与设置中连接对方电脑")
-	}
-	var c config
-	if e = json.Unmarshal(b, &c); e != nil {
 		return e
+	}
+	return sendTo(root, c.PeerHash, paths, progress)
+}
+func sendTo(root, hash string, paths []string, progress transferProgress) error {
+	c, e := findPeer(filepath.Join(root, "peer.json"), hash)
+	if e != nil {
+		return e
+	}
+	if !c.Enabled {
+		return errors.New("请先在设备管理中勾选启用此设备")
 	}
 	identity, e := loadIdentity(root)
 	if e != nil {

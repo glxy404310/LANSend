@@ -67,7 +67,7 @@ func resolvePeerUsing(c config, lookup func(string) (string, error)) (string, st
 		}
 		if discovered || (alias != "" && alias != c.PeerName) {
 			next := config{Address: address, PeerHash: c.PeerHash, PeerName: alias}
-			e = savePairExpected(filepath.Join(c.root, "peer.json"), next, false, &c.PeerHash)
+			e = storePair(filepath.Join(c.root, "peer.json"), next, true)
 			if e != nil {
 				failures = append(failures, e)
 				return "", false

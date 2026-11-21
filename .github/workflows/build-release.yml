@@ -1,0 +1,28 @@
+name: Build release archives
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test and build
+        run: |
+          go test ./...
+          make macos
+          mkdir -p build/windows-amd64
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w -H=windowsgui' -o build/windows-amd64/LANSend.exe .
+          python3 scripts/package.py build/windows-amd64/LANSend.exe build/LANSend.app dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0

@@ -32,8 +32,6 @@ type peerAliasEntry struct {
 	expires time.Time
 }
 
-var errPeerOccupied = errors.New("已有另一台已配对电脑。如需更换，请在「配对与设置」使用 LANSend 码")
-
 func readPeer(path string) (config, error) {
 	var c config
 	b, e := os.ReadFile(path)
@@ -123,8 +121,8 @@ func (n *embeddedNode) acceptAccountPair(w http.ResponseWriter, r *http.Request)
 	}
 	for _, p := range accountDevices(st) {
 		if p.ID == string(who.Node.StableID) && p.IP == source.Addr().Unmap().String() {
-			c := config{Address: net.JoinHostPort(p.IP, port), PeerHash: digest(r.TLS.PeerCertificates[0].Raw)}
-			if e := savePair(filepath.Join(n.root, "peer.json"), c, false); e != nil {
+			c := config{PeerName: p.Name, Address: net.JoinHostPort(p.IP, port), PeerHash: digest(r.TLS.PeerCertificates[0].Raw)}
+			if e := savePair(filepath.Join(n.root, "peer.json"), c); e != nil {
 				http.Error(w, e.Error(), 409)
 				return
 			}
@@ -148,11 +146,16 @@ func (n *embeddedNode) connectDevice(ctx context.Context, id string) error {
 			return e
 		}
 		path := filepath.Join(n.root, "peer.json")
-		old, e := readPeer(path)
+		all, e := peersAt(path)
 		if e != nil {
 			return e
 		}
-		c.PeerHash = old.PeerHash
+		for _, old := range all {
+			if old.Address == net.JoinHostPort(p.IP, port) || old.RemoteAddress == net.JoinHostPort(p.IP, port) {
+				c.PeerHash = old.PeerHash
+				break
+			}
+		}
 		cl, _, e := client(c, c.PeerHash == "")
 		if e != nil {
 			return e
@@ -178,7 +181,7 @@ func (n *embeddedNode) connectDevice(ctx context.Context, id string) error {
 			msg, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
 			return fmt.Errorf("对方未完成配对：%s %s", response.Status, strings.TrimSpace(string(msg)))
 		}
-		return savePair(path, config{Address: address, PeerHash: digest(response.TLS.PeerCertificates[0].Raw)}, false)
+		return savePair(path, config{PeerName: p.Name, Address: address, PeerHash: digest(response.TLS.PeerCertificates[0].Raw)})
 	}
 	return errors.New("对方已离线或已更换账号，请刷新设备列表")
 }

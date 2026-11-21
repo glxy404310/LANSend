@@ -77,7 +77,7 @@ func TestLANInvitePairing(t *testing.T) {
 	pb, _ := identityHash(b)
 	assertPeer := func(root, hash string) {
 		t.Helper()
-		peer, e := readPeer(filepath.Join(root, "peer.json"))
+		peer, e := findPeer(filepath.Join(root, "peer.json"), hash)
 		if e != nil || peer.PeerHash != hash || peer.Address == "" {
 			t.Fatal("incorrect pairing", e)
 		}
@@ -89,9 +89,6 @@ func TestLANInvitePairing(t *testing.T) {
 	}
 	if err = joinInvite(b, code, ""); err != nil {
 		t.Fatal("lost-response retry", err)
-	}
-	if _, err = invitePost(a, local, pin, "invite/new", ""); err == nil {
-		t.Fatal("replacement without consent")
 	}
 	code = issue(pb)
 	inv.Lock()
@@ -106,6 +103,14 @@ func TestLANInvitePairing(t *testing.T) {
 		t.Fatal(err)
 	}
 	pc, _ := identityHash(c)
+	assertPeer(a, pb)
 	assertPeer(a, pc)
+	if e := changePeer(a, pc, "unpair"); e != nil {
+		t.Fatal(e)
+	}
+	if joinInvite(c, code, "") == nil {
+		t.Fatal("removed device restored using claimed invitation")
+	}
+	assertPeer(a, pb)
 	assertPeer(c, pin)
 }

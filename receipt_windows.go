@@ -37,6 +37,7 @@ func receive(root string) error {
 	var w *walk.MainWindow
 	var files *walk.ComboBox
 	var title *walk.Label
+	var openFileBtn *walk.PushButton
 	var names []string
 	var paths []string
 	open := func(path string) {
@@ -46,27 +47,29 @@ func receive(root string) error {
 		}
 	}
 	ui := d.MainWindow{
-		AssignTo: &w,
-		Title:    "LANSend 收件",
-		Visible:  false,
-		Size:     d.Size{Width: 420, Height: 185},
-		MinSize:  d.Size{Width: 380, Height: 170},
-		Font:     d.Font{Family: chineseUIFont, PointSize: 10},
-		Layout:   d.VBox{Margins: d.Margins{Left: 16, Top: 14, Right: 16, Bottom: 14}, Spacing: 10},
+		AssignTo:   &w,
+		Title:      "LANSend 收件",
+		Visible:    false,
+		Size:       d.Size{Width: 430, Height: 196},
+		MinSize:    d.Size{Width: 380, Height: 180},
+		Font:       d.Font{Family: chineseUIFont, PointSize: 10},
+		Background: themeBrush{&palette.cardColor},
+		Layout:     d.VBox{Margins: d.Margins{Left: 20, Top: 16, Right: 20, Bottom: 18}, Spacing: 12},
 		Children: []d.Widget{
-			d.Label{MaxSize: d.Size{Height: 30}, AssignTo: &title, Font: d.Font{Family: chineseUIFont, PointSize: 15, Bold: true}},
-			d.ComboBox{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 32}, AssignTo: &files},
+			d.Label{MaxSize: d.Size{Height: 28}, AssignTo: &title, Font: d.Font{Family: chineseUIFont, PointSize: 13, Bold: true}, TextColor: palette.inkPrimary},
+			d.ComboBox{Font: d.Font{Family: chineseUIFont, PointSize: 10}, MaxSize: d.Size{Height: 34}, AssignTo: &files},
 			d.VSpacer{},
 			d.Composite{
-				Layout: d.HBox{MarginsZero: true, Spacing: 10},
+				Background: themeBrush{&palette.cardColor},
+				Layout:     d.HBox{MarginsZero: true, Spacing: 10},
 				Children: []d.Widget{
-					d.PushButton{MaxSize: d.Size{Height: 32}, Text: "打开文件", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: func() {
+					d.PushButton{AssignTo: &openFileBtn, MaxSize: d.Size{Height: 34}, Text: "打开文件", MinSize: d.Size{Width: 112, Height: 34}, OnClicked: func() {
 						i := files.CurrentIndex()
 						if i >= 0 && i < len(paths) {
 							open(paths[i])
 						}
 					}},
-					d.PushButton{MaxSize: d.Size{Height: 32}, Text: "打开收件夹", MinSize: d.Size{Width: 112, Height: 32}, OnClicked: func() {
+					d.PushButton{MaxSize: d.Size{Height: 34}, Text: "打开收件夹", MinSize: d.Size{Width: 112, Height: 34}, OnClicked: func() {
 						if i := files.CurrentIndex(); i >= 0 && i < len(paths) {
 							open(filepath.Dir(paths[i]))
 							return
@@ -87,6 +90,18 @@ func receive(root string) error {
 		return err
 	}
 	defer w.Dispose()
+	styleDesktopUI(w, desktopStyleConfig{
+		buttonVariant: func(button *walk.PushButton) buttonVariant {
+			if button == openFileBtn {
+				return buttonPrimary
+			}
+			return buttonSecondary
+		},
+		buttonSurface: func(*walk.PushButton) walk.Color {
+			return palette.cardColor
+		},
+	})
+	watchDesktopAppearance(w)
 	w.Closing().Attach(func(cancel *bool, _ walk.CloseReason) {
 		*cancel = true
 		w.Hide()
