@@ -1,6 +1,6 @@
 # LANSend
 
-**当前版本 `v1.7.0`** · [已发布的安装包与校验值](https://github.com/glxy404310/LANSend/releases/latest)
+**桌面稳定版 [v1.7.0](https://github.com/glxy404310/LANSend/releases/tag/v1.7.0)** · [下载 Windows x64](https://github.com/glxy404310/LANSend/releases/download/v1.7.0/LANSend-Windows-x64.zip) · [下载 macOS 通用版](https://github.com/glxy404310/LANSend/releases/download/v1.7.0/LANSend-macOS-universal.zip) · [SHA-256 校验值](https://github.com/glxy404310/LANSend/releases/download/v1.7.0/SHA256SUMS.txt)
 
 LANSend 是面向 Windows 与 macOS 的点对点文件互传工具（支持 Windows↔Windows、macOS↔macOS 及 Windows↔macOS 1 对 1 互传），使用 HTTPS 双向证书校验传输文件。支持通过资源管理器或 Finder 右键菜单快速发送，也支持内置 Tailscale（`tsnet`）跨网络直连。文件保存后，接收端默认弹出前台小窗口以便打开文件或收件夹，也可切换为静默接收。
 
